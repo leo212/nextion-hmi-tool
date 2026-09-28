@@ -296,7 +296,15 @@ function setComponentProp(parsed, propName, valBuffer) {
     }
     if (!found) {
         const newRec = Buffer.concat([padName, valBuffer]);
-        parsed.records.splice(Math.max(0, parsed.records.length - 3), 0, newRec);
+        let insIdx = parsed.records.length;
+        for (let i = 0; i < parsed.records.length; i++) {
+            const s = parsed.records[i].toString('ascii');
+            if (s.startsWith('codes') || parsed.records[i].length === 0) {
+                insIdx = i;
+                break;
+            }
+        }
+        parsed.records.splice(insIdx, 0, newRec);
     }
 }
 
@@ -313,6 +321,39 @@ function setPropU16(parsed, name, val) {
 function setPropStr(parsed, name, str) {
     const b = Buffer.from(String(str), 'utf8');
     setComponentProp(parsed, name, b);
+}
+
+function updateComponentFromYaml(parsed, yComp) {
+    const x = yComp.x !== undefined ? yComp.x : null;
+    const y = yComp.y !== undefined ? yComp.y : null;
+    const w = yComp.w !== undefined ? yComp.w : null;
+    const h = yComp.h !== undefined ? yComp.h : null;
+
+    if (x !== null && typeof x === 'number') setPropU16(parsed, 'x', x);
+    if (y !== null && typeof y === 'number') setPropU16(parsed, 'y', y);
+    if (w !== null && typeof w === 'number') setPropU16(parsed, 'w', w);
+    if (h !== null && typeof h === 'number') setPropU16(parsed, 'h', h);
+    if (x !== null && w !== null && typeof x === 'number' && typeof w === 'number') {
+        setPropU16(parsed, 'endx', x + w - 1);
+    }
+    if (y !== null && h !== null && typeof y === 'number' && typeof h === 'number') {
+        setPropU16(parsed, 'endy', y + h - 1);
+    }
+
+    if (yComp.txt !== undefined) {
+        setPropStr(parsed, 'txt', yComp.txt);
+        setPropU16(parsed, 'txt_maxl', Math.max(Buffer.byteLength(String(yComp.txt), 'utf8'), 20));
+    }
+    if (yComp.font !== undefined && typeof yComp.font === 'number') setPropU8(parsed, 'font', yComp.font);
+    if (yComp.pco !== undefined && typeof yComp.pco === 'number') setPropU16(parsed, 'pco', yComp.pco);
+    if (yComp.pco2 !== undefined && typeof yComp.pco2 === 'number') setPropU16(parsed, 'pco2', yComp.pco2);
+    if (yComp.bco !== undefined && typeof yComp.bco === 'number') setPropU16(parsed, 'bco', yComp.bco);
+    if (yComp.bco2 !== undefined && typeof yComp.bco2 === 'number') setPropU16(parsed, 'bco2', yComp.bco2);
+    if (yComp.sta !== undefined && typeof yComp.sta === 'number') setPropU8(parsed, 'sta', yComp.sta);
+    if (yComp.xcen !== undefined && typeof yComp.xcen === 'number') setPropU8(parsed, 'xcen', yComp.xcen);
+    if (yComp.ycen !== undefined && typeof yComp.ycen === 'number') setPropU8(parsed, 'ycen', yComp.ycen);
+    if (yComp.pic !== undefined && yComp.pic !== 65535 && typeof yComp.pic === 'number') setPropU16(parsed, 'pic', yComp.pic);
+    if (yComp.picc !== undefined && yComp.picc !== 65535 && typeof yComp.picc === 'number') setPropU16(parsed, 'picc', yComp.picc);
 }
 
 function findTemplateInHmi(buffer, targetAtt) {
@@ -339,12 +380,13 @@ function findTemplateInHmi(buffer, targetAtt) {
     return null;
 }
 
-function injectNewComponentsIntoPage(hmiBuf, pageName, newComps) {
+function patchPage(hmiBuf, pageData) {
+    const pageName = pageData.name;
     const count = hmiBuf.readUInt32LE(0);
     let targetEntry = null;
     for (let i = 0; i < count; i++) {
         const pos = 4 + i * 28;
-        const name = hmiBuf.toString('latin1', pos, pos + 16).replace(/\0.*$/, '');
+        const name = hmiBuf.toString('ascii', pos, pos + 16).replace(/\0.*$/, '');
         const start = hmiBuf.readUInt32LE(pos + 16);
         const size = hmiBuf.readUInt32LE(pos + 20);
         if (name.endsWith('.pa')) {
@@ -357,7 +399,7 @@ function injectNewComponentsIntoPage(hmiBuf, pageName, newComps) {
     }
 
     if (!targetEntry) {
-        console.warn(`[WARN] Could not find page entry for "${pageName}" in HMI archive table.`);
+        console.warn(`[WARN] Page "${pageName}" not found in HMI archive table.`);
         return hmiBuf;
     }
 
@@ -365,76 +407,81 @@ function injectNewComponentsIntoPage(hmiBuf, pageName, newComps) {
     const oldNumObj = oldPa.readUInt32LE(12);
 
     const compBodies = [];
+    const compMap = new Map(); // objname -> index in compBodies
+
     for (let j = 0; j < oldNumObj; j++) {
         const rel = oldPa.readUInt32LE(56 + j * 12);
         const len = oldPa.readUInt32LE(56 + j * 12 + 4);
-        compBodies.push(oldPa.slice(56 + rel, 56 + rel + len));
+        const cb = oldPa.slice(56 + rel, 56 + rel + len);
+        compBodies.push(cb);
+
+        const attLen = cb.readUInt32LE(0);
+        let p = 4 + attLen;
+        while (p < cb.length) {
+            const rLen = cb.readUInt32LE(p);
+            p += 4;
+            if (rLen === 0) break;
+            const rData = cb.slice(p, p + rLen);
+            p += rLen;
+            if (rData.length >= 16 && rData.slice(0, 7).toString('ascii') === 'objname') {
+                const name = rData.slice(16).toString('ascii').replace(/\0.*$/, '');
+                compMap.set(name, j);
+                break;
+            }
+        }
     }
 
-    for (let idx = 0; idx < newComps.length; idx++) {
-        const yComp = newComps[idx];
-        let targetAtt = 'att-39'; // default text
-        const typeLower = (yComp.type || '').toLowerCase();
-        if (typeLower === 'button' || typeLower === 'att-42' || (!yComp.type && yComp.objname.startsWith('b'))) targetAtt = 'att-42';
-        else if (typeLower === 'text' || typeLower === 'att-39' || (!yComp.type && yComp.objname.startsWith('t'))) targetAtt = 'att-39';
-        else if (typeLower === 'picture' || typeLower === 'pic' || typeLower === 'att-22' || (!yComp.type && yComp.objname.startsWith('p'))) targetAtt = 'att-22';
-        else if (typeLower === 'hotspot' || typeLower === 'att-21' || typeLower === 'att-8' || (!yComp.type && yComp.objname.startsWith('m'))) targetAtt = 'att-21';
+    let updatedCount = 0;
+    let newCount = 0;
 
-        let templateBuf = compBodies.find(cb => {
-            const aLen = cb.readUInt32LE(0);
-            return cb.slice(4, 4 + aLen).toString('ascii') === targetAtt;
-        });
+    for (const yComp of pageData.components) {
+        if (compMap.has(yComp.objname)) {
+            const j = compMap.get(yComp.objname);
+            const parsed = parseComponentRecords(compBodies[j]);
+            updateComponentFromYaml(parsed, yComp);
+            compBodies[j] = serializeComponentRecords(parsed.attName, parsed.records);
+            updatedCount++;
+        } else {
+            let targetAtt = 'att-39'; // default text
+            const typeLower = (yComp.type || '').toLowerCase();
+            if (typeLower === 'button' || typeLower === 'att-42' || (!yComp.type && yComp.objname.startsWith('b'))) targetAtt = 'att-42';
+            else if (typeLower === 'text' || typeLower === 'att-39' || (!yComp.type && yComp.objname.startsWith('t'))) targetAtt = 'att-39';
+            else if (typeLower === 'picture' || typeLower === 'pic' || typeLower === 'att-22' || (!yComp.type && yComp.objname.startsWith('p'))) targetAtt = 'att-22';
+            else if (typeLower === 'hotspot' || typeLower === 'att-21' || typeLower === 'att-8' || (!yComp.type && yComp.objname.startsWith('m'))) targetAtt = 'att-21';
 
-        if (!templateBuf) templateBuf = findTemplateInHmi(hmiBuf, targetAtt);
-        if (!templateBuf) templateBuf = compBodies[compBodies.length - 1];
+            let templateBuf = compBodies.find(cb => {
+                const aLen = cb.readUInt32LE(0);
+                return cb.slice(4, 4 + aLen).toString('ascii') === targetAtt;
+            });
+            if (!templateBuf) templateBuf = findTemplateInHmi(hmiBuf, targetAtt);
+            if (!templateBuf) templateBuf = compBodies[compBodies.length - 1];
 
-        const parsed = parseComponentRecords(templateBuf);
+            const parsed = parseComponentRecords(templateBuf);
+            parsed.records = parsed.records.filter(r => {
+                const s = r.toString('ascii');
+                if (s.startsWith('codesdown') || s.startsWith('codesup') || r.length === 0) return false;
+                return true;
+            });
 
-        // Remove any existing event scripts to avoid undefined variable conflicts
-        parsed.records = parsed.records.filter(r => {
-            const s = r.toString('ascii');
-            if (s.startsWith('codesdown') || s.startsWith('codesup') || r.length === 0) return false;
-            if (r.length < 16) return false;
-            return true;
-        });
+            const newId = compBodies.length;
+            setPropU8(parsed, 'id', newId);
+            setPropStr(parsed, 'objname', yComp.objname);
+            updateComponentFromYaml(parsed, yComp);
 
-        const newId = oldNumObj + idx;
-        setPropU8(parsed, 'id', newId);
-        setPropStr(parsed, 'objname', yComp.objname);
+            parsed.records.push(Buffer.from('codesdown-0', 'ascii'));
+            parsed.records.push(Buffer.from('codesup-0', 'ascii'));
+            parsed.records.push(Buffer.alloc(0));
 
-        const x = yComp.x || 0;
-        const y = yComp.y || 0;
-        const w = yComp.w || 50;
-        const h = yComp.h || 20;
-        setPropU16(parsed, 'x', x);
-        setPropU16(parsed, 'y', y);
-        setPropU16(parsed, 'w', w);
-        setPropU16(parsed, 'h', h);
-        setPropU16(parsed, 'endx', x + w - 1);
-        setPropU16(parsed, 'endy', y + h - 1);
-
-        if (yComp.txt !== undefined) {
-            setPropStr(parsed, 'txt', yComp.txt);
-            setPropU16(parsed, 'txt_maxl', Math.max(Buffer.byteLength(String(yComp.txt), 'utf8'), 20));
+            const newCompBuf = serializeComponentRecords(parsed.attName, parsed.records);
+            compMap.set(yComp.objname, compBodies.length);
+            compBodies.push(newCompBuf);
+            newCount++;
+            console.log(`[IMPORT] Created new component "${yComp.objname}" (type: ${yComp.type || targetAtt}) on page "${pageName}".`);
         }
-        if (yComp.font !== undefined) setPropU8(parsed, 'font', yComp.font);
-        if (yComp.pco !== undefined) setPropU16(parsed, 'pco', yComp.pco);
-        if (yComp.pco2 !== undefined) setPropU16(parsed, 'pco2', yComp.pco2);
-        if (yComp.bco !== undefined) setPropU16(parsed, 'bco', yComp.bco);
-        if (yComp.bco2 !== undefined) setPropU16(parsed, 'bco2', yComp.bco2);
-        if (yComp.sta !== undefined) setPropU8(parsed, 'sta', yComp.sta);
-        if (yComp.xcen !== undefined) setPropU8(parsed, 'xcen', yComp.xcen);
-        if (yComp.ycen !== undefined) setPropU8(parsed, 'ycen', yComp.ycen);
-        if (yComp.pic !== undefined && yComp.pic !== 65535) setPropU16(parsed, 'pic', yComp.pic);
-        if (yComp.picc !== undefined && yComp.picc !== 65535) setPropU16(parsed, 'picc', yComp.picc);
+    }
 
-        parsed.records.push(Buffer.from('codesdown-0', 'ascii'));
-        parsed.records.push(Buffer.from('codesup-0', 'ascii'));
-        parsed.records.push(Buffer.alloc(0));
-
-        const newCompBuf = serializeComponentRecords(parsed.attName, parsed.records);
-        compBodies.push(newCompBuf);
-        console.log(`[IMPORT] Created new component "${yComp.objname}" (type: ${yComp.type || targetAtt}) on page "${pageName}".`);
+    if (updatedCount > 0) {
+        console.log(`[IMPORT] Updated ${updatedCount} existing components on page "${pageName}".`);
     }
 
     const newNumObj = compBodies.length;
@@ -462,20 +509,25 @@ function injectNewComponentsIntoPage(hmiBuf, pageName, newComps) {
     newPa.writeUInt32LE(crc, 0);
 
     const delta = newPa.length - targetEntry.size;
-    const newHmi = Buffer.alloc(hmiBuf.length + delta);
-    hmiBuf.copy(newHmi, 0, 0, targetEntry.start);
-    newPa.copy(newHmi, targetEntry.start);
-    hmiBuf.copy(newHmi, targetEntry.start + newPa.length, targetEntry.start + targetEntry.size);
+    let newHmi = hmiBuf;
+    if (delta !== 0) {
+        newHmi = Buffer.alloc(hmiBuf.length + delta);
+        hmiBuf.copy(newHmi, 0, 0, targetEntry.start);
+        newPa.copy(newHmi, targetEntry.start);
+        hmiBuf.copy(newHmi, targetEntry.start + newPa.length, targetEntry.start + targetEntry.size);
 
-    const entryCount = newHmi.readUInt32LE(0);
-    for (let i = 0; i < entryCount; i++) {
-        const pos = 4 + i * 28;
-        const start = newHmi.readUInt32LE(pos + 16);
-        if (pos === targetEntry.pos) {
-            newHmi.writeUInt32LE(newPa.length, pos + 20);
-        } else if (start > targetEntry.start) {
-            newHmi.writeUInt32LE(start + delta, pos + 16);
+        const entryCount = newHmi.readUInt32LE(0);
+        for (let i = 0; i < entryCount; i++) {
+            const pos = 4 + i * 28;
+            const start = newHmi.readUInt32LE(pos + 16);
+            if (pos === targetEntry.pos) {
+                newHmi.writeUInt32LE(newPa.length, pos + 20);
+            } else if (start > targetEntry.start) {
+                newHmi.writeUInt32LE(start + delta, pos + 16);
+            }
         }
+    } else {
+        newPa.copy(newHmi, targetEntry.start);
     }
 
     syncArchiveDirectoryTables(newHmi);
@@ -882,72 +934,11 @@ function importHmi(projectDir, outHmiPath) {
     const pagesDir = path.join(absProjDir, 'pages');
     if (fs.existsSync(pagesDir)) {
         const pageFiles = fs.readdirSync(pagesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-        const compMap = manifest.componentMap || {};
 
         for (const pf of pageFiles) {
             const yamlContent = fs.readFileSync(path.join(pagesDir, pf), 'utf8');
             const pageData = parseYamlPage(yamlContent);
-            const pageMap = compMap[pageData.name] || {};
-
-            const newComps = [];
-            let updatedProps = 0;
-
-            for (const yComp of pageData.components) {
-                const mappedComp = pageMap[yComp.objname];
-                if (!mappedComp) {
-                    newComps.push(yComp);
-                    continue;
-                }
-
-                // Patch existing component properties
-                const pOffs = mappedComp.propOffsets || {};
-                const KNOWN = ['x', 'y', 'w', 'h', 'font', 'bco', 'pco', 'pic', 'picc', 'sta', 'xcen', 'ycen'];
-                for (const prop of KNOWN) {
-                    if (yComp[prop] !== undefined && pOffs[prop]) {
-                        const off = pOffs[prop];
-                        let curVal = null;
-                        if (['font', 'sta', 'xcen', 'ycen'].includes(prop)) {
-                            curVal = hmiBuf.readUInt8(off);
-                            if (curVal !== yComp[prop]) {
-                                hmiBuf.writeUInt8(yComp[prop] & 0xFF, off);
-                                updatedProps++;
-                            }
-                        } else {
-                            curVal = hmiBuf.readUInt16LE(off);
-                            if (curVal !== yComp[prop]) {
-                                hmiBuf.writeUInt16LE(yComp[prop] & 0xFFFF, off);
-                                if (prop === 'x' && pOffs['endx'] && yComp.w !== undefined) {
-                                    hmiBuf.writeUInt16LE((yComp.x + yComp.w - 1) & 0xFFFF, pOffs['endx']);
-                                } else if (prop === 'y' && pOffs['endy'] && yComp.h !== undefined) {
-                                    hmiBuf.writeUInt16LE((yComp.y + yComp.h - 1) & 0xFFFF, pOffs['endy']);
-                                }
-                                updatedProps++;
-                            }
-                        }
-                    }
-                }
-
-                // Patch text
-                if (yComp.txt !== undefined && pOffs['txt']) {
-                    const txtOff = pOffs['txt'];
-                    const txtBuf = Buffer.from(String(yComp.txt), 'utf8');
-                    const maxl = pOffs['txt_maxl'] ? hmiBuf.readUInt16LE(pOffs['txt_maxl']) : 30;
-                    if (txtBuf.length < maxl) {
-                        txtBuf.copy(hmiBuf, txtOff);
-                        hmiBuf[txtOff + txtBuf.length] = 0;
-                        updatedProps++;
-                    }
-                }
-            }
-
-            if (newComps.length > 0) {
-                console.log(`[IMPORT] Injecting ${newComps.length} new components onto page "${pageData.name}"...`);
-                hmiBuf = injectNewComponentsIntoPage(hmiBuf, pageData.name, newComps);
-            }
-
-            if (updatedProps > 0) {
-                console.log(`[IMPORT] Updated ${updatedProps} properties on page "${pageData.name}".`);
-            }
+            hmiBuf = patchPage(hmiBuf, pageData);
         }
     }
 
