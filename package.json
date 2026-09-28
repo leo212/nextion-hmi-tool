@@ -1,0 +1,21 @@
+{
+  "name": "nextion-hmi-tool",
+  "version": "1.0.0",
+  "description": "Bi-directional human-readable YAML layout & asset manager for Nextion HMI files with zero dependencies",
+  "main": "hmi_tool.js",
+  "bin": {
+    "nextion-hmi-tool": "./hmi_tool.js"
+  },
+  "keywords": [
+    "nextion",
+    "hmi",
+    "esphome",
+    "nspanel",
+    "smart-home",
+    "display",
+    "yaml",
+    "gui"
+  ],
+  "author": "",
+  "license": "MIT"
+}
