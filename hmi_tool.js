@@ -1001,8 +1001,12 @@ function addImageToHmi(srcHmiBuf, imageId, pngBuf) {
     }
 
     const assignedPictureId = lastImageIdx + 1;
-    const fileId = (imageId !== null && imageId !== undefined) ? imageId : assignedPictureId;
-    const targetName = `${fileId}.i`;
+    let nextNum = Math.max(maxFileNum + 1, assignedPictureId);
+    while (archiveFiles.has(nextNum + ".i") || archiveFiles.has(nextNum + ".is")) {
+        nextNum++;
+    }
+    const fileId = nextNum;
+    const targetName = fileId + ".i";
 
     const insertPos = lastImageIdx + 1;
     records.splice(insertPos, 0, { type: 'i', name: targetName });
