@@ -435,6 +435,9 @@ function patchPage(hmiBuf, pageData) {
     let newCount = 0;
 
     for (const yComp of pageData.components) {
+        if (yComp.objname && Buffer.byteLength(yComp.objname, 'utf8') > 14) {
+            throw new Error(`[ERROR] Component objname "${yComp.objname}" exceeds Nextion maximum allowed length of 14 bytes (${Buffer.byteLength(yComp.objname, 'utf8')} bytes).`);
+        }
         if (compMap.has(yComp.objname)) {
             const j = compMap.get(yComp.objname);
             const parsed = parseComponentRecords(compBodies[j]);
