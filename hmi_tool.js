@@ -319,7 +319,12 @@ function setPropU16(parsed, name, val) {
     setComponentProp(parsed, name, b);
 }
 function setPropStr(parsed, name, str) {
-    const b = Buffer.from(String(str), 'utf8');
+    let s = String(str);
+    if (name === 'txt') {
+        // Nextion text components require CRLF (\r\n) for line breaks
+        s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
+    }
+    const b = Buffer.from(s, 'utf8');
     setComponentProp(parsed, name, b);
 }
 
@@ -342,7 +347,8 @@ function updateComponentFromYaml(parsed, yComp) {
 
     if (yComp.txt !== undefined) {
         setPropStr(parsed, 'txt', yComp.txt);
-        setPropU16(parsed, 'txt_maxl', Math.max(Buffer.byteLength(String(yComp.txt), 'utf8'), 20));
+        const crlfStr = String(yComp.txt).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
+        setPropU16(parsed, 'txt_maxl', Math.max(Buffer.byteLength(crlfStr, 'utf8'), 20));
     }
     if (yComp.font !== undefined && typeof yComp.font === 'number') setPropU8(parsed, 'font', yComp.font);
     if (yComp.pco !== undefined && typeof yComp.pco === 'number') setPropU16(parsed, 'pco', yComp.pco);
@@ -645,7 +651,13 @@ function pageToYaml(page) {
         lines.push(`    y: ${comp.y}`);
         lines.push(`    w: ${comp.w}`);
         lines.push(`    h: ${comp.h}`);
-        if (comp.txt !== undefined) lines.push(`    txt: "${comp.txt.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r/g, '').replace(/\n/g, '\\n')}"`);
+        if (comp.txt !== undefined) {
+            const cleanTxt = comp.txt
+                .replace(/\r\n\n/g, '\n')
+                .replace(/\r\n/g, '\n')
+                .replace(/\r/g, '\n');
+            lines.push(`    txt: "${cleanTxt.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`);
+        }
         if (comp.font !== undefined) lines.push(`    font: ${comp.font}`);
         if (comp.pco !== undefined) lines.push(`    pco: ${comp.pco}`);
         if (comp.bco !== undefined) lines.push(`    bco: ${comp.bco}`);
