@@ -866,8 +866,110 @@ function parsePicturesYaml(content) {
     return pictures;
 }
 
+// ============================================================================
+// Pre-Import Project Validator
+// Strictly enforces Nextion HMI hardware & editor specifications before
+// modifying or creating any files.
+// ============================================================================
+
+function validateProjectBeforeImport(absProjDir) {
+    const errors = [];
+
+    // 1. Validate pictures.yaml
+    const picturesYamlPath = path.join(absProjDir, 'pictures.yaml');
+    if (fs.existsSync(picturesYamlPath)) {
+        try {
+            const picList = parsePicturesYaml(fs.readFileSync(picturesYamlPath, 'utf8'));
+            for (let i = 0; i < picList.length; i++) {
+                const p = picList[i];
+                if (p.id === undefined || typeof p.id !== 'number' || p.id < 0) {
+                    errors.push(`Picture entry #${i} has invalid ID: ${p.id}`);
+                }
+                const pngPath = path.join(absProjDir, 'pictures', p.file || `${p.id}.png`);
+                if (!fs.existsSync(pngPath)) {
+                    errors.push(`Picture file not found: "${p.file || p.id + '.png'}" for picture ID ${p.id}`);
+                }
+            }
+        } catch (e) {
+            errors.push(`Failed to parse pictures.yaml: ${e.message}`);
+        }
+    }
+
+    // 2. Validate pages/*.yaml
+    const pagesDir = path.join(absProjDir, 'pages');
+    if (fs.existsSync(pagesDir)) {
+        const pageFiles = fs.readdirSync(pagesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+
+        for (const pf of pageFiles) {
+            const yamlPath = path.join(pagesDir, pf);
+            let pageData = null;
+            try {
+                pageData = parseYamlPage(fs.readFileSync(yamlPath, 'utf8'));
+            } catch (e) {
+                errors.push(`Failed to parse YAML page "${pf}": ${e.message}`);
+                continue;
+            }
+
+            const pageName = pageData.name || path.basename(pf, path.extname(pf));
+            if (Buffer.byteLength(pageName, 'utf8') > 14) {
+                errors.push(`Page name "${pageName}" in ${pf} exceeds Nextion max length of 14 bytes (${Buffer.byteLength(pageName, 'utf8')} bytes).`);
+            }
+
+            const compNames = new Set();
+            for (let i = 0; i < pageData.components.length; i++) {
+                const c = pageData.components[i];
+                if (!c.objname) {
+                    errors.push(`Component #${i} in page "${pageName}" is missing an objname.`);
+                    continue;
+                }
+
+                const byteLen = Buffer.byteLength(c.objname, 'utf8');
+                if (byteLen < 1 || byteLen > 14) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid length (${byteLen} bytes). Nextion requires: Min Length 1 byte, Max Length 14 bytes.`);
+                }
+
+                if (!/^[a-zA-Z0-9_]+$/.test(c.objname)) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" contains invalid characters. Nextion names only allow letters, numbers, and underscores.`);
+                }
+
+                if (compNames.has(c.objname)) {
+                    errors.push(`Duplicate component objname "${c.objname}" found on page "${pageName}". Each component on a page must have a unique name.`);
+                }
+                compNames.add(c.objname);
+
+                if (typeof c.x === 'number' && c.x < 0) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid negative x coordinate (${c.x}).`);
+                }
+                if (typeof c.y === 'number' && c.y < 0) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid negative y coordinate (${c.y}).`);
+                }
+                if (typeof c.w === 'number' && c.w <= 0) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid non-positive width (${c.w}).`);
+                }
+                if (typeof c.h === 'number' && c.h <= 0) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid non-positive height (${c.h}).`);
+                }
+            }
+        }
+    }
+
+    if (errors.length > 0) {
+        console.error('\n' + '='.repeat(75));
+        console.error(' [VALIDATION FAILED] Nextion Specifications Violation:');
+        console.error(' Cannot build HMI because the project definition contains errors:');
+        for (const err of errors) {
+            console.error(`   * ${err}`);
+        }
+        console.error('='.repeat(75) + '\n');
+        throw new Error(`Project validation failed with ${errors.length} error(s). Aborted HMI generation to prevent creating an invalid or corrupted file.`);
+    }
+}
+
 function importHmi(projectDir, outHmiPath) {
     const absProjDir = path.resolve(projectDir);
+
+    // Validate project before touching any files or buffers
+    validateProjectBeforeImport(absProjDir);
     const manifestPath = path.join(absProjDir, 'project.json');
 
     if (!fs.existsSync(manifestPath)) {
