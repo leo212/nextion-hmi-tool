@@ -318,16 +318,6 @@ function setPropU16(parsed, name, val) {
     b.writeUInt16LE(val & 0xFFFF, 0);
     setComponentProp(parsed, name, b);
 }
-function setPropU32(parsed, name, val) {
-    const b = Buffer.alloc(4);
-    b.writeUInt32LE(val >>> 0, 0);
-    setComponentProp(parsed, name, b);
-}
-function setPropI32(parsed, name, val) {
-    const b = Buffer.alloc(4);
-    b.writeInt32LE(val | 0, 0);
-    setComponentProp(parsed, name, b);
-}
 function setPropStr(parsed, name, str) {
     let s = String(str);
     if (name === 'txt') {
@@ -370,163 +360,6 @@ function updateComponentFromYaml(parsed, yComp) {
     if (yComp.ycen !== undefined && typeof yComp.ycen === 'number') setPropU8(parsed, 'ycen', yComp.ycen);
     if (yComp.pic !== undefined && yComp.pic !== 65535 && typeof yComp.pic === 'number') setPropU16(parsed, 'pic', yComp.pic);
     if (yComp.picc !== undefined && yComp.picc !== 65535 && typeof yComp.picc === 'number') setPropU16(parsed, 'picc', yComp.picc);
-
-    // Variables & Timers
-    if (yComp.vscope !== undefined) {
-        let vs = 0;
-        if (typeof yComp.vscope === 'string') {
-            vs = yComp.vscope.toLowerCase() === 'global' ? 1 : 0;
-        } else {
-            vs = Number(yComp.vscope) ? 1 : 0;
-        }
-        setPropU8(parsed, 'vscope', vs);
-    }
-    if (yComp.var_type !== undefined) {
-        const vt = String(yComp.var_type).toLowerCase();
-        setPropU8(parsed, 'sta', (vt === 'string' || vt === 'txt') ? 1 : 0);
-    }
-    if (yComp.val !== undefined && typeof yComp.val === 'number') {
-        setPropI32(parsed, 'val', yComp.val);
-    }
-    if (yComp.txt_maxl !== undefined && typeof yComp.txt_maxl === 'number') {
-        setPropU16(parsed, 'txt_maxl', yComp.txt_maxl);
-    }
-    if (yComp.tim !== undefined && typeof yComp.tim === 'number') {
-        setPropU16(parsed, 'tim', yComp.tim);
-    }
-    if (yComp.en !== undefined) {
-        setPropU8(parsed, 'en', yComp.en ? 1 : 0);
-    }
-}
-
-function getComponentEvents(attName) {
-    if (attName === 'att-28') return ['codesload', 'codesloadend', 'codesdown', 'codesup', 'codesunload'];
-    if (attName === 'att-9' || attName === 'att-35') return ['codestimer'];
-    if (attName === 'att-11') return [];
-    return ['codesdown', 'codesup'];
-}
-
-function normalizeEventName(key) {
-    const k = key.toLowerCase().replace(/[-_]/g, '');
-    if (k === 'codesdown' || k === 'down' || k === 'touchpress' || k === 'press') return 'codesdown';
-    if (k === 'codesup' || k === 'up' || k === 'touchrelease' || k === 'release') return 'codesup';
-    if (k === 'codestimer' || k === 'timer' || k === 'tick') return 'codestimer';
-    if (k === 'codesload' || k === 'load' || k === 'preinit') return 'codesload';
-    if (k === 'codesloadend' || k === 'loadend' || k === 'postinit') return 'codesloadend';
-    if (k === 'codesunload' || k === 'unload' || k === 'exit' || k === 'leave') return 'codesunload';
-    return key;
-}
-
-function extractPropertiesAndScripts(parsed) {
-    const propRecords = [];
-    const scripts = {};
-
-    let i = 0;
-    while (i < parsed.records.length) {
-        const r = parsed.records[i];
-        if (r.length === 0) {
-            i++;
-            break;
-        }
-        const s = r.toString('ascii');
-        const match = s.match(/^(codes[a-z]+)-(\d+)$/);
-        if (match) {
-            const evtName = match[1];
-            const lineCount = parseInt(match[2], 10);
-            const lines = [];
-            for (let k = 0; k < lineCount; k++) {
-                i++;
-                if (i < parsed.records.length) {
-                    lines.push(parsed.records[i].toString('utf8'));
-                }
-            }
-            if (lines.length > 0) {
-                scripts[evtName] = lines.join('\n');
-            }
-        } else {
-            propRecords.push(r);
-        }
-        i++;
-    }
-
-    return { propRecords, scripts };
-}
-
-function rebuildRecordsWithScripts(attName, propRecords, scripts) {
-    const newRecords = [...propRecords];
-    const evts = getComponentEvents(attName);
-
-    const normalizedScripts = {};
-    if (scripts && typeof scripts === 'object') {
-        for (const [k, v] of Object.entries(scripts)) {
-            normalizedScripts[normalizeEventName(k)] = v;
-        }
-    }
-
-    for (const evt of evts) {
-        const scriptContent = normalizedScripts[evt];
-        if (scriptContent !== undefined && scriptContent !== null && String(scriptContent).trim().length > 0) {
-            const lines = String(scriptContent).split(/\r?\n/);
-            while (lines.length > 0 && lines[lines.length - 1] === '') {
-                lines.pop();
-            }
-            newRecords.push(Buffer.from(`${evt}-${lines.length}`, 'ascii'));
-            for (const line of lines) {
-                newRecords.push(Buffer.from(line, 'utf8'));
-            }
-        } else {
-            newRecords.push(Buffer.from(`${evt}-0`, 'ascii'));
-        }
-    }
-    newRecords.push(Buffer.alloc(0));
-    return newRecords;
-}
-
-function createDefaultVariableTemplate() {
-    const records = [];
-    const pad = (s) => {
-        const b = Buffer.alloc(16, 0);
-        b.write(s, 0, 'ascii');
-        return b;
-    };
-    records.push(Buffer.concat([pad('type'), Buffer.from([0x34])]));
-    records.push(Buffer.concat([pad('id'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('objname'), Buffer.from('va0', 'ascii')]));
-    records.push(Buffer.concat([pad('vscope'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('lockobj'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('groupid0'), Buffer.alloc(4, 0)]));
-    records.push(Buffer.concat([pad('groupid1'), Buffer.alloc(4, 0)]));
-    records.push(Buffer.concat([pad('sta'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('txt'), Buffer.alloc(0)]));
-    const maxlBuf = Buffer.alloc(2);
-    maxlBuf.writeUInt16LE(10, 0);
-    records.push(Buffer.concat([pad('txt_maxl'), maxlBuf]));
-    records.push(Buffer.concat([pad('val'), Buffer.alloc(4, 0)]));
-    records.push(Buffer.alloc(0));
-    return serializeComponentRecords('att-11', records);
-}
-
-function createDefaultTimerTemplate() {
-    const records = [];
-    const pad = (s) => {
-        const b = Buffer.alloc(16, 0);
-        b.write(s, 0, 'ascii');
-        return b;
-    };
-    records.push(Buffer.concat([pad('type'), Buffer.from([0x33])]));
-    records.push(Buffer.concat([pad('id'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('objname'), Buffer.from('tm0', 'ascii')]));
-    records.push(Buffer.concat([pad('vscope'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('lockobj'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('groupid0'), Buffer.alloc(4, 0)]));
-    records.push(Buffer.concat([pad('groupid1'), Buffer.alloc(4, 0)]));
-    const timBuf = Buffer.alloc(2);
-    timBuf.writeUInt16LE(50, 0);
-    records.push(Buffer.concat([pad('tim'), timBuf]));
-    records.push(Buffer.concat([pad('en'), Buffer.from([0x00])]));
-    records.push(Buffer.from('codestimer-0', 'ascii'));
-    records.push(Buffer.alloc(0));
-    return serializeComponentRecords('att-9', records);
 }
 
 function findTemplateInHmi(buffer, targetAtt) {
@@ -615,10 +448,6 @@ function patchPage(hmiBuf, pageData) {
             const j = compMap.get(yComp.objname);
             const parsed = parseComponentRecords(compBodies[j]);
             updateComponentFromYaml(parsed, yComp);
-            if (yComp.scripts) {
-                const { propRecords } = extractPropertiesAndScripts(parsed);
-                parsed.records = rebuildRecordsWithScripts(parsed.attName, propRecords, yComp.scripts);
-            }
             compBodies[j] = serializeComponentRecords(parsed.attName, parsed.records);
             updatedCount++;
         } else {
@@ -628,30 +457,29 @@ function patchPage(hmiBuf, pageData) {
             else if (typeLower === 'text' || typeLower === 'att-39' || (!yComp.type && yComp.objname.startsWith('t'))) targetAtt = 'att-39';
             else if (typeLower === 'picture' || typeLower === 'pic' || typeLower === 'att-22' || (!yComp.type && yComp.objname.startsWith('p'))) targetAtt = 'att-22';
             else if (typeLower === 'hotspot' || typeLower === 'att-21' || typeLower === 'att-8' || (!yComp.type && yComp.objname.startsWith('m'))) targetAtt = 'att-21';
-            else if (typeLower === 'variable' || typeLower === 'var' || typeLower === 'att-11' || (!yComp.type && yComp.objname.startsWith('va_'))) targetAtt = 'att-11';
-            else if (typeLower === 'timer' || typeLower === 'tm' || typeLower === 'att-9' || typeLower === 'att-35' || (!yComp.type && yComp.objname.startsWith('tm_'))) targetAtt = 'att-9';
 
             let templateBuf = compBodies.find(cb => {
                 const aLen = cb.readUInt32LE(0);
                 return cb.slice(4, 4 + aLen).toString('ascii') === targetAtt;
             });
             if (!templateBuf) templateBuf = findTemplateInHmi(hmiBuf, targetAtt);
-            if (!templateBuf) {
-                if (targetAtt === 'att-11') templateBuf = createDefaultVariableTemplate();
-                else if (targetAtt === 'att-9') templateBuf = createDefaultTimerTemplate();
-                else templateBuf = compBodies[compBodies.length - 1];
-            }
+            if (!templateBuf) templateBuf = compBodies[compBodies.length - 1];
 
             const parsed = parseComponentRecords(templateBuf);
-            const { propRecords } = extractPropertiesAndScripts(parsed);
-            parsed.records = propRecords;
+            parsed.records = parsed.records.filter(r => {
+                const s = r.toString('ascii');
+                if (s.startsWith('codesdown') || s.startsWith('codesup') || r.length === 0) return false;
+                return true;
+            });
 
             const newId = compBodies.length;
             setPropU8(parsed, 'id', newId);
             setPropStr(parsed, 'objname', yComp.objname);
             updateComponentFromYaml(parsed, yComp);
 
-            parsed.records = rebuildRecordsWithScripts(parsed.attName, parsed.records, yComp.scripts || {});
+            parsed.records.push(Buffer.from('codesdown-0', 'ascii'));
+            parsed.records.push(Buffer.from('codesup-0', 'ascii'));
+            parsed.records.push(Buffer.alloc(0));
 
             const newCompBuf = serializeComponentRecords(parsed.attName, parsed.records);
             compMap.set(yComp.objname, compBodies.length);
@@ -749,9 +577,8 @@ function scanHmi(buffer) {
 
                     const attLen = compSlice.length >= 4 ? compSlice.readUInt32LE(0) : 0;
                     let typeName = undefined;
-                    let rawAtt = '';
                     if (attLen > 0 && attLen <= 16 && compSlice.length >= 4 + attLen) {
-                        rawAtt = compSlice.slice(4, 4 + attLen).toString('ascii');
+                        const rawAtt = compSlice.slice(4, 4 + attLen).toString('ascii');
                         if (rawAtt === 'att-39') typeName = 'text';
                         else if (rawAtt === 'att-42') typeName = 'button';
                         else if (rawAtt === 'att-22') typeName = 'picture';
@@ -760,21 +587,15 @@ function scanHmi(buffer) {
                         else if (rawAtt === 'att-41') typeName = 'gauge';
                         else if (rawAtt === 'att-30') typeName = 'progress';
                         else if (rawAtt === 'att-34') typeName = 'slider';
-                        else if (rawAtt === 'att-35' || rawAtt === 'att-9') typeName = 'timer';
-                        else if (rawAtt === 'att-11') typeName = 'variable';
+                        else if (rawAtt === 'att-35') typeName = 'timer';
                     }
-
-                    const parsedRecords = parseComponentRecords(compSlice);
-                    const { scripts } = extractPropertiesAndScripts(parsedRecords);
 
                     const comp = {
                         index: j,
                         type: typeName,
-                        attName: rawAtt,
                         offset: start + compStart,
                         size: compSize,
-                        propOffsets: {},
-                        scripts: Object.keys(scripts).length > 0 ? scripts : undefined
+                        propOffsets: {}
                     };
 
                     let p = 4 + attLen;
@@ -803,11 +624,6 @@ function scanHmi(buffer) {
                             else if (propName === 'sta' && valBuf.length >= 1) comp.sta = valBuf.readUInt8(0);
                             else if (propName === 'xcen' && valBuf.length >= 1) comp.xcen = valBuf.readUInt8(0);
                             else if (propName === 'ycen' && valBuf.length >= 1) comp.ycen = valBuf.readUInt8(0);
-                            else if (propName === 'vscope' && valBuf.length >= 1) comp.vscope = valBuf.readUInt8(0);
-                            else if (propName === 'val' && valBuf.length >= 4) comp.val = valBuf.readInt32LE(0);
-                            else if (propName === 'txt_maxl' && valBuf.length >= 2) comp.txt_maxl = valBuf.readUInt16LE(0);
-                            else if (propName === 'tim' && valBuf.length >= 2) comp.tim = valBuf.readUInt16LE(0);
-                            else if (propName === 'en' && valBuf.length >= 1) comp.en = valBuf.readUInt8(0);
                         }
                         if (recLen === 0) break;
                     }
@@ -823,7 +639,7 @@ function scanHmi(buffer) {
     return pages;
 }
 
-function pageToYaml(page, scriptsDirRel, scriptsDirAbs) {
+function pageToYaml(page) {
     const lines = [];
     lines.push(`# Page: ${page.name}`);
     lines.push(`page: "${page.name}"`);
@@ -831,136 +647,50 @@ function pageToYaml(page, scriptsDirRel, scriptsDirAbs) {
     for (const comp of page.components) {
         lines.push(`  - objname: "${comp.objname}"`);
         if (comp.type) lines.push(`    type: "${comp.type}"`);
-
-        if (comp.type === 'variable') {
-            lines.push(`    vscope: "${comp.vscope === 1 ? 'global' : 'local'}"`);
-            lines.push(`    var_type: "${comp.sta === 1 ? 'string' : 'number'}"`);
-            if (comp.sta === 1) {
-                if (comp.txt !== undefined) {
-                    const cleanTxt = comp.txt
-                        .replace(/\r\n\n/g, '\n')
-                        .replace(/\r\n/g, '\n')
-                        .replace(/\r/g, '\n');
-                    lines.push(`    txt: "${cleanTxt.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`);
-                }
-                if (comp.txt_maxl !== undefined) lines.push(`    txt_maxl: ${comp.txt_maxl}`);
-            } else {
-                lines.push(`    val: ${comp.val !== undefined ? comp.val : 0}`);
-            }
-        } else if (comp.type === 'timer') {
-            if (comp.vscope !== undefined) lines.push(`    vscope: "${comp.vscope === 1 ? 'global' : 'local'}"`);
-            if (comp.tim !== undefined) lines.push(`    tim: ${comp.tim}`);
-            if (comp.en !== undefined) lines.push(`    en: ${comp.en}`);
-        } else {
-            if (comp.x !== undefined) lines.push(`    x: ${comp.x}`);
-            if (comp.y !== undefined) lines.push(`    y: ${comp.y}`);
-            if (comp.w !== undefined) lines.push(`    w: ${comp.w}`);
-            if (comp.h !== undefined) lines.push(`    h: ${comp.h}`);
-            if (comp.txt !== undefined) {
-                const cleanTxt = comp.txt
-                    .replace(/\r\n\n/g, '\n')
-                    .replace(/\r\n/g, '\n')
-                    .replace(/\r/g, '\n');
-                lines.push(`    txt: "${cleanTxt.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`);
-            }
-            if (comp.font !== undefined) lines.push(`    font: ${comp.font}`);
-            if (comp.pco !== undefined) lines.push(`    pco: ${comp.pco}`);
-            if (comp.pco2 !== undefined) lines.push(`    pco2: ${comp.pco2}`);
-            if (comp.bco !== undefined) lines.push(`    bco: ${comp.bco}`);
-            if (comp.bco2 !== undefined) lines.push(`    bco2: ${comp.bco2}`);
-            if (comp.pic !== undefined && comp.pic !== 65535) lines.push(`    pic: ${comp.pic}`);
-            if (comp.picc !== undefined && comp.picc !== 65535) lines.push(`    picc: ${comp.picc}`);
-            if (comp.sta !== undefined) lines.push(`    sta: ${comp.sta}`);
-            if (comp.xcen !== undefined) lines.push(`    xcen: ${comp.xcen}`);
-            if (comp.ycen !== undefined) lines.push(`    ycen: ${comp.ycen}`);
+        lines.push(`    x: ${comp.x}`);
+        lines.push(`    y: ${comp.y}`);
+        lines.push(`    w: ${comp.w}`);
+        lines.push(`    h: ${comp.h}`);
+        if (comp.txt !== undefined) {
+            const cleanTxt = comp.txt
+                .replace(/\r\n\n/g, '\n')
+                .replace(/\r\n/g, '\n')
+                .replace(/\r/g, '\n');
+            lines.push(`    txt: "${cleanTxt.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`);
         }
-
-        if (comp.scripts && Object.keys(comp.scripts).length > 0) {
-            lines.push('    scripts:');
-            for (const [evt, scriptCode] of Object.entries(comp.scripts)) {
-                if (scriptsDirAbs && scriptsDirRel) {
-                    fs.mkdirSync(scriptsDirAbs, { recursive: true });
-                    const scriptFileName = `${comp.objname}.${evt}.js`;
-                    const scriptFilePath = path.join(scriptsDirAbs, scriptFileName);
-                    let fileCode = scriptCode;
-                    const headerComment = '// Nextion Display Script (Nextion instruction set syntax, not standard JavaScript)\n';
-                    if (!fileCode.startsWith('// Nextion Display Script')) {
-                        fileCode = headerComment + fileCode;
-                    }
-                    fs.writeFileSync(scriptFilePath, fileCode, 'utf8');
-                    const scriptRelPath = path.join(scriptsDirRel, scriptFileName).replace(/\\/g, '/');
-                    lines.push(`      ${evt}: "${scriptRelPath}"`);
-                } else {
-                    lines.push(`      ${evt}: |`);
-                    for (const sLine of scriptCode.split(/\r?\n/)) {
-                        lines.push(`        ${sLine}`);
-                    }
-                }
-            }
-        }
-
+        if (comp.font !== undefined) lines.push(`    font: ${comp.font}`);
+        if (comp.pco !== undefined) lines.push(`    pco: ${comp.pco}`);
+        if (comp.bco !== undefined) lines.push(`    bco: ${comp.bco}`);
+        if (comp.pic !== undefined && comp.pic !== 65535) lines.push(`    pic: ${comp.pic}`);
+        if (comp.picc !== undefined && comp.picc !== 65535) lines.push(`    picc: ${comp.picc}`);
+        if (comp.sta !== undefined) lines.push(`    sta: ${comp.sta}`);
+        if (comp.xcen !== undefined) lines.push(`    xcen: ${comp.xcen}`);
+        if (comp.ycen !== undefined) lines.push(`    ycen: ${comp.ycen}`);
         lines.push('');
     }
     return lines.join('\n');
 }
 
-function parseYamlPage(yamlContent, baseDir) {
+function parseYamlPage(yamlContent) {
     let pageName = 'default';
     const components = [];
     let curComp = null;
-    let curSection = null;
-    let curMultilineKey = null;
-    let curMultilineLines = [];
-    let curMultilineIndent = 0;
 
     const lines = yamlContent.split('\n');
+    for (let line of lines) {
+        line = line.trim();
+        if (!line || line.startsWith('#')) continue;
 
-    function flushMultiline() {
-        if (curComp && curSection && curMultilineKey) {
-            if (!curComp[curSection]) curComp[curSection] = {};
-            curComp[curSection][curMultilineKey] = curMultilineLines.join('\n');
-        }
-        curMultilineKey = null;
-        curMultilineLines = [];
-        curMultilineIndent = 0;
-    }
-
-    for (let rawLine of lines) {
-        if (curMultilineKey) {
-            const indentMatch = rawLine.match(/^(\s*)/);
-            const indentLen = indentMatch ? indentMatch[1].length : 0;
-            const trimmed = rawLine.trim();
-
-            if (trimmed.length === 0) {
-                curMultilineLines.push('');
-                continue;
-            }
-
-            if (indentLen < curMultilineIndent && trimmed.length > 0) {
-                flushMultiline();
-            } else {
-                curMultilineLines.push(rawLine.slice(curMultilineIndent));
-                continue;
-            }
-        }
-
-        const trimmed = rawLine.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-
-        if (trimmed.startsWith('page:')) {
-            flushMultiline();
-            curSection = null;
-            const rawVal = trimmed.slice(trimmed.indexOf(':') + 1).trim();
+        if (line.startsWith('page:')) {
+            const rawVal = line.slice(line.indexOf(':') + 1).trim();
             const pageMatch = rawVal.match(/^"([^"]*)"/) || rawVal.match(/^'([^']*)'/);
             pageName = pageMatch ? pageMatch[1] : rawVal.split('#')[0].trim();
             curComp = null;
             continue;
         }
 
-        if (trimmed.startsWith('- objname:')) {
-            flushMultiline();
-            curSection = null;
-            const rawVal = trimmed.slice(trimmed.indexOf(':') + 1).trim();
+        if (line.startsWith('- objname:')) {
+            const rawVal = line.slice(line.indexOf(':') + 1).trim();
             const objMatch = rawVal.match(/^"([^"]*)"/) || rawVal.match(/^'([^']*)'/);
             const objname = objMatch ? objMatch[1] : rawVal.split('#')[0].trim();
             curComp = { objname };
@@ -968,78 +698,14 @@ function parseYamlPage(yamlContent, baseDir) {
             continue;
         }
 
-        if (!curComp) continue;
-
-        const indentMatch = rawLine.match(/^(\s*)/);
-        const indentLen = indentMatch ? indentMatch[1].length : 0;
-
-        if (trimmed === 'scripts:' || trimmed.startsWith('scripts:')) {
-            flushMultiline();
-            curSection = 'scripts';
-            if (!curComp.scripts) curComp.scripts = {};
-            continue;
-        }
-
-        if (curSection === 'scripts' && indentLen >= 4 && trimmed.includes(':')) {
-            const colonIdx = trimmed.indexOf(':');
-            const key = trimmed.slice(0, colonIdx).trim();
-            let rawVal = trimmed.slice(colonIdx + 1).trim();
-
-            if (rawVal === '|' || rawVal === '|-') {
-                curMultilineKey = key;
-                curMultilineIndent = indentLen + 2;
-                curMultilineLines = [];
-                continue;
-            }
-
-            let val = rawVal;
-            if (rawVal.startsWith('"') && rawVal.lastIndexOf('"') > 0) {
-                val = rawVal.slice(1, rawVal.lastIndexOf('"'));
-            } else if (rawVal.startsWith("'") && rawVal.lastIndexOf("'") > 0) {
-                val = rawVal.slice(1, rawVal.lastIndexOf("'"));
-            } else {
-                val = rawVal.split('#')[0].trim();
-            }
-
-            if (baseDir && typeof val === 'string' && val.length > 0 && !val.includes('\n')) {
-                const candidates = [
-                    path.resolve(baseDir, val),
-                    path.resolve(baseDir, '..', val),
-                    path.resolve(baseDir, 'scripts', val)
-                ];
-                for (const c of candidates) {
-                    if (fs.existsSync(c) && fs.statSync(c).isFile()) {
-                        val = fs.readFileSync(c, 'utf8');
-                        break;
-                    }
-                }
-            }
-
-            if (!curComp.scripts) curComp.scripts = {};
-            curComp.scripts[key] = val;
-            continue;
-        }
-
-        if (curSection && indentLen <= 4 && !trimmed.startsWith('scripts:')) {
-            flushMultiline();
-            curSection = null;
-        }
-
-        if (trimmed.includes(':')) {
-            const colonIdx = trimmed.indexOf(':');
-            const key = trimmed.slice(0, colonIdx).trim();
-            let rawVal = trimmed.slice(colonIdx + 1).trim();
+        if (curComp && line.includes(':')) {
+            const colonIdx = line.indexOf(':');
+            const key = line.slice(0, colonIdx).trim();
+            let rawVal = line.slice(colonIdx + 1).trim();
             if (rawVal.startsWith('"')) {
                 const endQuote = rawVal.lastIndexOf('"');
                 if (endQuote > 0) {
                     curComp[key] = rawVal.slice(1, endQuote).replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-                } else {
-                    curComp[key] = rawVal.slice(1);
-                }
-            } else if (rawVal.startsWith("'")) {
-                const endQuote = rawVal.lastIndexOf("'");
-                if (endQuote > 0) {
-                    curComp[key] = rawVal.slice(1, endQuote);
                 } else {
                     curComp[key] = rawVal.slice(1);
                 }
@@ -1054,7 +720,6 @@ function parseYamlPage(yamlContent, baseDir) {
             }
         }
     }
-    flushMultiline();
     return { name: pageName, components };
 }
 
@@ -1151,9 +816,7 @@ function exportHmi(hmiPath, outDir) {
     const pages = scanHmi(hmiBuf);
     const componentMap = {};
     for (const page of pages) {
-        const scriptsDirRel = path.join('scripts', page.name).replace(/\\/g, '/');
-        const scriptsDirAbs = path.join(targetDir, 'scripts', page.name);
-        const pageYamlContent = pageToYaml(page, scriptsDirRel, scriptsDirAbs);
+        const pageYamlContent = pageToYaml(page);
         const pageYamlPath = path.join(targetDir, 'pages', `${page.name}.yaml`);
         fs.writeFileSync(pageYamlPath, pageYamlContent, 'utf8');
 
@@ -1286,20 +949,17 @@ function validateProjectBeforeImport(absProjDir) {
                 }
                 compNames.add(c.objname);
 
-                const isNonVisual = c.type === 'variable' || c.type === 'timer';
-                if (!isNonVisual) {
-                    if (typeof c.x === 'number' && c.x < 0) {
-                        errors.push(`Component "${c.objname}" on page "${pageName}" has invalid negative x coordinate (${c.x}).`);
-                    }
-                    if (typeof c.y === 'number' && c.y < 0) {
-                        errors.push(`Component "${c.objname}" on page "${pageName}" has invalid negative y coordinate (${c.y}).`);
-                    }
-                    if (typeof c.w === 'number' && c.w <= 0) {
-                        errors.push(`Component "${c.objname}" on page "${pageName}" has invalid non-positive width (${c.w}).`);
-                    }
-                    if (typeof c.h === 'number' && c.h <= 0) {
-                        errors.push(`Component "${c.objname}" on page "${pageName}" has invalid non-positive height (${c.h}).`);
-                    }
+                if (typeof c.x === 'number' && c.x < 0) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid negative x coordinate (${c.x}).`);
+                }
+                if (typeof c.y === 'number' && c.y < 0) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid negative y coordinate (${c.y}).`);
+                }
+                if (typeof c.w === 'number' && c.w <= 0) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid non-positive width (${c.w}).`);
+                }
+                if (typeof c.h === 'number' && c.h <= 0) {
+                    errors.push(`Component "${c.objname}" on page "${pageName}" has invalid non-positive height (${c.h}).`);
                 }
             }
         }
@@ -1394,7 +1054,7 @@ function importHmi(projectDir, outHmiPath) {
 
         for (const pf of pageFiles) {
             const yamlContent = fs.readFileSync(path.join(pagesDir, pf), 'utf8');
-            const pageData = parseYamlPage(yamlContent, pagesDir);
+            const pageData = parseYamlPage(yamlContent);
             hmiBuf = patchPage(hmiBuf, pageData);
         }
     }
