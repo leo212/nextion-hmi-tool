@@ -1499,6 +1499,7 @@ function importHmi(projectDir, outHmiPath) {
     if (fs.existsSync(picturesYamlPath)) {
         const picList = parsePicturesYaml(fs.readFileSync(picturesYamlPath, 'utf8'));
         const origPics = manifest.originalPictures || [];
+        const replacements = [];
 
         for (const p of picList) {
             const pngPath = path.join(absProjDir, 'pictures', p.file || `${p.id}.png`);
@@ -1517,10 +1518,13 @@ function importHmi(projectDir, outHmiPath) {
                 hmiBuf = added.outBuf;
             } else if (origPic.sha256 !== currentSha) {
                 // MODIFIED existing picture!
-                console.log(`[IMPORT] Detected modified picture ID ${p.id} (${pngPath}). Updating in HMI...`);
-                const added = addImageToHmi(hmiBuf, p.id, pngBuf);
-                hmiBuf = added.outBuf;
+                console.log(`[IMPORT] Detected modified picture ID ${p.id} (${pngPath}). Replacing in HMI...`);
+                replacements.push({ origPic, pngBuf });
             }
+        }
+        if (replacements.length > 0) {
+            hmiBuf = replaceImagesInHmi(hmiBuf, replacements);
+            console.log(`[IMPORT] Successfully replaced ${replacements.length} existing picture(s) in HMI archive.`);
         }
     }
 
@@ -1576,6 +1580,65 @@ function importHmi(projectDir, outHmiPath) {
 // ============================================================================
 // Helper: Append Image to HMI Archive (Preserving Sequential Order)
 // ============================================================================
+
+
+function replaceImagesInHmi(srcHmiBuf, replacements) {
+    const fileCount = srcHmiBuf.readUInt32LE(0);
+    const archiveFiles = new Map();
+    let pos = 4;
+    for (let i = 0; i < fileCount; i++) {
+        const rawName = srcHmiBuf.toString('latin1', pos, pos + 16);
+        if (rawName.charCodeAt(0) !== 0) {
+            const name = rawName.replace(/\0.*$/, '');
+            const offset = srcHmiBuf.readUInt32LE(pos + 16);
+            const size = srcHmiBuf.readUInt32LE(pos + 20);
+            const f24 = srcHmiBuf.readUInt32LE(pos + 24);
+            archiveFiles.set(name, {
+                name,
+                f24,
+                data: Buffer.from(srcHmiBuf.subarray(offset, offset + size))
+            });
+        }
+        pos += 28;
+    }
+
+    for (const { origPic, pngBuf } of replacements) {
+        const decoded = decodePngToRgb565(pngBuf);
+        const isBuf = buildIsBuffer(pngBuf, decoded.width, decoded.height);
+        const iBuf = buildIBuffer(decoded.rgb565Buf, decoded.width, decoded.height);
+
+        const targetIName = origPic.name || (origPic.id + '.i');
+        const targetIsName = origPic.isName || targetIName.replace(/\.i$/, '.is');
+
+        archiveFiles.set(targetIName, { name: targetIName, f24: 0, data: iBuf });
+        archiveFiles.set(targetIsName, { name: targetIsName, f24: 0, data: isBuf });
+    }
+
+    const fileList = Array.from(archiveFiles.values());
+    const newCount = fileList.length;
+
+    let currentOffset = 0x700000;
+    for (const f of fileList) {
+        f.offset = currentOffset;
+        f.size = f.data.length;
+        currentOffset += f.size;
+    }
+
+    const outBuf = Buffer.alloc(currentOffset);
+    outBuf.writeUInt32LE(newCount, 0);
+
+    let dirPos = 4;
+    for (const f of fileList) {
+        outBuf.write(f.name, dirPos, 16, 'latin1');
+        outBuf.writeUInt32LE(f.offset, dirPos + 16);
+        outBuf.writeUInt32LE(f.size, dirPos + 20);
+        outBuf.writeUInt32LE(f.f24 || 0, dirPos + 24);
+        f.data.copy(outBuf, f.offset);
+        dirPos += 28;
+    }
+
+    return outBuf;
+}
 
 function addImageToHmi(srcHmiBuf, imageId, pngBuf) {
     const decoded = decodePngToRgb565(pngBuf);
