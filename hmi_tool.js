@@ -1076,6 +1076,7 @@ function exportHmi(hmiPath, outDir) {
 
     fs.mkdirSync(path.join(targetDir, 'pages'), { recursive: true });
     fs.mkdirSync(path.join(targetDir, 'pictures'), { recursive: true });
+    fs.mkdirSync(path.join(targetDir, 'fonts'), { recursive: true });
 
     // Parse directory table
     const fileCount = hmiBuf.readUInt32LE(0);
@@ -1147,6 +1148,44 @@ function exportHmi(hmiPath, outDir) {
     fs.writeFileSync(path.join(targetDir, 'pictures.yaml'), picturesYamlContent, 'utf8');
     console.log(`[EXPORT] Extracted ${pictureRecords.length} picture assets to: ${path.join(targetDir, 'pictures')}`);
 
+    // 1b. Export Fonts (.zi)
+    const fontRecords = [];
+    const fontsYamlList = [];
+    let fontSeqId = 0;
+    for (let p = 0x60; p < mainHmiBuf.length; p += 16) {
+        const type = mainHmiBuf.toString('latin1', p, p + 8).replace(/\0.*$/, '');
+        const name = mainHmiBuf.toString('latin1', p + 8, p + 16).replace(/\0.*$/, '');
+        if (type === 'zi') {
+            const fileEntry = archiveFiles.get(name);
+            const fontFileName = `${fontSeqId}.zi`;
+            let sha256 = '';
+            if (fileEntry) {
+                fs.writeFileSync(path.join(targetDir, 'fonts', fontFileName), fileEntry.data);
+                sha256 = crypto.createHash('sha256').update(fileEntry.data).digest('hex');
+            }
+            fontRecords.push({
+                id: fontSeqId,
+                name,
+                file: fontFileName,
+                size: fileEntry ? fileEntry.size : 0,
+                sha256
+            });
+            fontsYamlList.push(`  - id: ${fontSeqId}\n    name: "${name}"\n    file: "${fontFileName}"\n    size: ${fileEntry ? fileEntry.size : 0}`);
+            fontSeqId++;
+        }
+    }
+
+    const fontsYamlContent = [
+        '# Nextion HMI Fonts Definition',
+        '# Font IDs are strictly sequential (0, 1, 2, ...).',
+        '# You can replace existing font .zi files or append new fonts at the end.',
+        'fonts:',
+        fontsYamlList.join('\n')
+    ].join('\n') + '\n';
+
+    fs.writeFileSync(path.join(targetDir, 'fonts.yaml'), fontsYamlContent, 'utf8');
+    console.log(`[EXPORT] Extracted ${fontRecords.length} font assets to: ${path.join(targetDir, 'fonts')}`);
+
     // 2. Export Pages
     const pages = scanHmi(hmiBuf);
     const componentMap = {};
@@ -1179,6 +1218,8 @@ function exportHmi(hmiPath, outDir) {
         exportedAt: new Date().toISOString(),
         pictureCount: pictureRecords.length,
         originalPictures: pictureRecords,
+        fontCount: fontRecords.length,
+        originalFonts: fontRecords,
         pages: pages.map(p => p.name),
         componentMap
     };
@@ -1215,6 +1256,29 @@ function parsePicturesYaml(content) {
     return pictures;
 }
 
+function parseFontsYaml(content) {
+    const fonts = [];
+    let curFont = null;
+    for (let line of content.split('\n')) {
+        line = line.trim();
+        if (!line || line.startsWith('#')) continue;
+        if (line.startsWith('- id:')) {
+            const id = parseInt(line.split(':')[1].trim(), 10);
+            curFont = { id };
+            fonts.push(curFont);
+            continue;
+        }
+        if (curFont && line.includes(':')) {
+            const parts = line.split(':');
+            const k = parts[0].trim();
+            const v = parts.slice(1).join(':').replace(/["']/g, '').trim();
+            const num = parseInt(v, 10);
+            curFont[k] = (!isNaN(num) && String(num) === v) ? num : v;
+        }
+    }
+    return fonts;
+}
+
 // ============================================================================
 // Pre-Import Project Validator
 // Strictly enforces Nextion HMI hardware & editor specifications before
@@ -1224,23 +1288,82 @@ function parsePicturesYaml(content) {
 function validateProjectBeforeImport(absProjDir) {
     const errors = [];
 
-    // 1. Validate pictures.yaml
+    // Read manifest for baseline integrity comparison
+    let manifest = null;
+    const manifestPath = path.join(absProjDir, 'project.json');
+    if (fs.existsSync(manifestPath)) {
+        try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch (e) {}
+    }
+
+    // 1. Validate pictures.yaml & protections
     const picturesYamlPath = path.join(absProjDir, 'pictures.yaml');
     if (fs.existsSync(picturesYamlPath)) {
         try {
             const picList = parsePicturesYaml(fs.readFileSync(picturesYamlPath, 'utf8'));
+            const origPics = (manifest && manifest.originalPictures) || [];
+
+            // A. Check strictly sequential IDs (0, 1, 2, ...)
             for (let i = 0; i < picList.length; i++) {
                 const p = picList[i];
-                if (p.id === undefined || typeof p.id !== 'number' || p.id < 0) {
-                    errors.push(`Picture entry #${i} has invalid ID: ${p.id}`);
+                if (p.id === undefined || typeof p.id !== 'number' || p.id !== i) {
+                    errors.push(`Picture IDs in pictures.yaml must be strictly sequential (0, 1, 2, ...). Entry #${i} has ID ${p.id} (expected ${i}). Non-sequential IDs or removing picture entries will scramble component bindings and corrupt Nextion Editor tables.`);
                 }
                 const pngPath = path.join(absProjDir, 'pictures', p.file || `${p.id}.png`);
                 if (!fs.existsSync(pngPath)) {
                     errors.push(`Picture file not found: "${p.file || p.id + '.png'}" for picture ID ${p.id}`);
                 }
             }
+
+            // B. Protection against removing pictures
+            if (origPics.length > 0 && picList.length < origPics.length) {
+                errors.push(`Removing pictures is unsupported. The project originally had ${origPics.length} pictures, but pictures.yaml contains ${picList.length}. Deleting pictures shifts picture IDs and breaks component bindings (pic/picc) across pages. To change a picture, replace its PNG file instead of deleting the entry.`);
+            }
+
+            // C. Protection against modifying picture order
+            const checkPicCount = Math.min(picList.length, origPics.length);
+            for (let i = 0; i < checkPicCount; i++) {
+                if (origPics[i] && picList[i].name && picList[i].name !== origPics[i].name) {
+                    errors.push(`Modifying picture order is unsupported. Picture ID ${i} was originally "${origPics[i].name}", but found "${picList[i].name}". Reordering pictures scrambles Nextion picture references. You may only replace existing PNG images or append new pictures at the end.`);
+                }
+            }
         } catch (e) {
             errors.push(`Failed to parse pictures.yaml: ${e.message}`);
+        }
+    }
+
+    // 2. Validate fonts.yaml & protections
+    const fontsYamlPath = path.join(absProjDir, 'fonts.yaml');
+    if (fs.existsSync(fontsYamlPath)) {
+        try {
+            const fontList = parseFontsYaml(fs.readFileSync(fontsYamlPath, 'utf8'));
+            const origFonts = (manifest && manifest.originalFonts) || [];
+
+            // A. Check strictly sequential IDs
+            for (let i = 0; i < fontList.length; i++) {
+                const f = fontList[i];
+                if (f.id === undefined || typeof f.id !== 'number' || f.id !== i) {
+                    errors.push(`Font IDs in fonts.yaml must be strictly sequential (0, 1, 2, ...). Entry #${i} has ID ${f.id} (expected ${i}). Non-sequential IDs corrupt Nextion font bindings.`);
+                }
+                const ziPath = path.join(absProjDir, 'fonts', f.file || `${f.id}.zi`);
+                if (!fs.existsSync(ziPath)) {
+                    errors.push(`Font file not found: "${f.file || f.id + '.zi'}" for font ID ${f.id}`);
+                }
+            }
+
+            // B. Protection against removing fonts
+            if (origFonts.length > 0 && fontList.length < origFonts.length) {
+                errors.push(`Removing fonts is unsupported. The project originally had ${origFonts.length} fonts, but fonts.yaml contains ${fontList.length}. Deleting fonts shifts font IDs and scrambles text component font bindings across pages. To change a font, replace its .zi file instead of deleting the entry.`);
+            }
+
+            // C. Protection against modifying font order
+            const checkFontCount = Math.min(fontList.length, origFonts.length);
+            for (let i = 0; i < checkFontCount; i++) {
+                if (origFonts[i] && fontList[i].name && fontList[i].name !== origFonts[i].name) {
+                    errors.push(`Modifying font order is unsupported. Font ID ${i} was originally "${origFonts[i].name}", but found "${fontList[i].name}". Reordering fonts scrambles Nextion font references.`);
+                }
+            }
+        } catch (e) {
+            errors.push(`Failed to parse fonts.yaml: ${e.message}`);
         }
     }
 
@@ -1300,6 +1423,20 @@ function validateProjectBeforeImport(absProjDir) {
                     if (typeof c.h === 'number' && c.h <= 0) {
                         errors.push(`Component "${c.objname}" on page "${pageName}" has invalid non-positive height (${c.h}).`);
                     }
+                }
+            }
+
+            // Protection against removing components
+            if (manifest && manifest.componentMap && manifest.componentMap[pageName]) {
+                const origComps = Object.keys(manifest.componentMap[pageName]);
+                const missingComps = [];
+                for (const origComp of origComps) {
+                    if (!compNames.has(origComp)) {
+                        missingComps.push(origComp);
+                    }
+                }
+                if (missingComps.length > 0) {
+                    errors.push(`Removing page components is unsupported. Page "${pageName}" in ${pf} is missing ${missingComps.length} original component(s): ${missingComps.map(c => `"${c}"`).join(', ')}. Deleting components from YAML shifts Nextion component IDs and may break internal script references. You can modify properties or add new components, but all original components must be preserved.`);
                 }
             }
         }
@@ -1383,6 +1520,34 @@ function importHmi(projectDir, outHmiPath) {
                 console.log(`[IMPORT] Detected modified picture ID ${p.id} (${pngPath}). Updating in HMI...`);
                 const added = addImageToHmi(hmiBuf, p.id, pngBuf);
                 hmiBuf = added.outBuf;
+            }
+        }
+    }
+
+    // 1b. Process Fonts (fonts.yaml)
+    const fontsYamlPath = path.join(absProjDir, 'fonts.yaml');
+    if (fs.existsSync(fontsYamlPath)) {
+        const fontList = parseFontsYaml(fs.readFileSync(fontsYamlPath, 'utf8'));
+        const origFonts = manifest.originalFonts || [];
+
+        for (const f of fontList) {
+            const ziPath = path.join(absProjDir, 'fonts', f.file || `${f.id}.zi`);
+            if (!fs.existsSync(ziPath)) {
+                console.warn(`[WARN] Font file not found: ${ziPath}`);
+                continue;
+            }
+            const ziBuf = fs.readFileSync(ziPath);
+            const currentSha = crypto.createHash('sha256').update(ziBuf).digest('hex');
+
+            const origFont = origFonts.find(of => of.id === f.id);
+            if (!origFont) {
+                // NEW font added!
+                console.log(`[IMPORT] Detected new font ID ${f.id} (${ziPath}). Adding to HMI...`);
+                hmiBuf = addOrUpdateFontInHmi(hmiBuf, f.id, ziBuf, f.name);
+            } else if (origFont.sha256 !== currentSha) {
+                // MODIFIED existing font!
+                console.log(`[IMPORT] Detected modified font ID ${f.id} (${ziPath}). Updating in HMI...`);
+                hmiBuf = addOrUpdateFontInHmi(hmiBuf, f.id, ziBuf, f.name);
             }
         }
     }
@@ -1515,6 +1680,111 @@ function addImageToHmi(srcHmiBuf, imageId, pngBuf) {
     return { outBuf, imageId: assignedPictureId, fileId, width: decoded.width, height: decoded.height };
 }
 
+
+function addOrUpdateFontInHmi(srcHmiBuf, fontId, ziBuf, fontName) {
+    const fileCount = srcHmiBuf.readUInt32LE(0);
+    const archiveFiles = new Map();
+    let pos = 4;
+    for (let i = 0; i < fileCount; i++) {
+        const rawName = srcHmiBuf.toString('latin1', pos, pos + 16);
+        if (rawName.charCodeAt(0) !== 0) {
+            const name = rawName.replace(/\0.*$/, '');
+            const offset = srcHmiBuf.readUInt32LE(pos + 16);
+            const size = srcHmiBuf.readUInt32LE(pos + 20);
+            const f24 = srcHmiBuf.readUInt32LE(pos + 24);
+            archiveFiles.set(name, {
+                name,
+                f24,
+                data: Buffer.from(srcHmiBuf.subarray(offset, offset + size))
+            });
+        }
+        pos += 28;
+    }
+
+    const mainHmiEntry = archiveFiles.get('main.HMI');
+    if (!mainHmiEntry) throw new Error('main.HMI not found in archive');
+
+    const oldMainHmi = mainHmiEntry.data;
+    const records = [];
+    for (let p = 0x60; p < oldMainHmi.length; p += 16) {
+        const type = oldMainHmi.toString('latin1', p, p + 8).replace(/\0.*$/, '');
+        const name = oldMainHmi.toString('latin1', p + 8, p + 16).replace(/\0.*$/, '');
+        records.push({ type, name });
+    }
+
+    let existingIdx = -1;
+    let ziCount = 0;
+    let lastZiIdx = -1;
+    let maxFileNum = -1;
+    for (let i = 0; i < records.length; i++) {
+        if (records[i].type === 'zi') {
+            if (ziCount === fontId) existingIdx = i;
+            lastZiIdx = i;
+            ziCount++;
+            const num = parseInt(records[i].name);
+            if (!isNaN(num) && num > maxFileNum) maxFileNum = num;
+        }
+    }
+
+    if (existingIdx !== -1) {
+        const recName = records[existingIdx].name;
+        archiveFiles.set(recName, { name: recName, f24: 0, data: ziBuf });
+    } else {
+        let nextNum = Math.max(maxFileNum + 1, fontId);
+        while (archiveFiles.has(nextNum + ".zi")) {
+            nextNum++;
+        }
+        const newFileName = nextNum + ".zi";
+        archiveFiles.set(newFileName, { name: newFileName, f24: 0, data: ziBuf });
+
+        const insertPos = lastZiIdx + 1;
+        records.splice(insertPos, 0, { type: 'zi', name: newFileName });
+
+        const newMainHmi = Buffer.alloc(0x60 + records.length * 16);
+        oldMainHmi.copy(newMainHmi, 0, 0, 0x60);
+        newMainHmi.writeUInt32LE(records.length, 0x1c);
+        for (let i = 0; i < records.length; i++) {
+            const recOff = 0x60 + i * 16;
+            newMainHmi.write(records[i].type, recOff, 8, 'latin1');
+            newMainHmi.write(records[i].name, recOff + 8, 8, 'latin1');
+        }
+
+        const mainCrc = computeNextionMainHmiCrc(newMainHmi);
+        newMainHmi.writeUInt32LE(mainCrc, 0);
+        archiveFiles.set('main.HMI', { name: 'main.HMI', f24: 0, data: newMainHmi });
+    }
+
+    const fileList = Array.from(archiveFiles.values());
+    const newCount = fileList.length;
+    const tableLen = 4 + newCount * 28;
+
+    let currentOffset = 0x700000;
+    for (const f of fileList) {
+        f.offset = currentOffset;
+        f.size = f.data.length;
+        currentOffset += f.size;
+    }
+
+    const outBuf = Buffer.alloc(currentOffset);
+    outBuf.writeUInt32LE(newCount, 0);
+
+    let dirPos = 4;
+    for (const f of fileList) {
+        outBuf.write(f.name, dirPos, 16, 'latin1');
+        outBuf.writeUInt32LE(f.offset, dirPos + 16);
+        outBuf.writeUInt32LE(f.size, dirPos + 20);
+        outBuf.writeUInt32LE(f.f24 || 0, dirPos + 24);
+        f.data.copy(outBuf, f.offset);
+        dirPos += 28;
+    }
+
+    const tableCrc = computeTableCrc(outBuf.subarray(0, tableLen));
+    outBuf.writeUInt32LE(tableCrc, tableLen);
+    outBuf.copy(outBuf, 0x80000, 0, tableLen + 4);
+
+    return outBuf;
+}
+
 // ============================================================================
 // CLI Entry Point
 // ============================================================================
@@ -1560,6 +1830,7 @@ module.exports = {
     exportHmi,
     importHmi,
     addImageToHmi,
+    addOrUpdateFontInHmi,
     computeNextionMainHmiCrc,
     computeTableCrc,
     computeNextionPageCrc
