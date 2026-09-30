@@ -1,11 +1,11 @@
 # Nextion HMI Tool (`nextion-hmi-tool`)
 
-> **Lossless, bi-directional human-readable YAML layout & asset manager for Nextion `.HMI` project files with zero external dependencies.**
+> **Lossless, bi-directional human-readable YAML layout, script, font & asset manager for Nextion `.HMI` project files with zero external dependencies.**
 
-Nextion Editor stores its UI projects in proprietary compound binary files (`.HMI`). Modifying layout coordinates, colors, fonts, or component positions in bulk using the Nextion GUI is tedious and error-prone. Furthermore, Nextion `.HMI` files are locked with multiple layers of proprietary IEEE 802.3 CRCs and checksums�meaning naive edits or third-party tools result in Nextion Editor reporting:
+Nextion Editor stores its UI projects in proprietary compound binary files (`.HMI`). Modifying layout coordinates, colors, fonts, or component logic in bulk using the Nextion GUI is tedious and error-prone. Furthermore, Nextion `.HMI` files are locked with multiple layers of proprietary IEEE 802.3 CRCs and checksums—meaning naive edits or third-party tools result in Nextion Editor reporting:
 > `"Wrong Hmifile or Hmifile has been damaged."`
 
-**`nextion-hmi-tool`** completely solves this problem. It allows you to **export** any Nextion `.HMI` project into clean per-page YAML files and standard PNG images, edit or add components and pictures in your favorite text editor / image editor, and **import** them back into a valid `.HMI` file that Nextion Editor opens and compiles seamlessly.
+**`nextion-hmi-tool`** completely solves this problem. It allows you to **export** any Nextion `.HMI` project into clean per-page YAML files, standard PNG images, `.zi` font files, and syntax-highlighted script files, edit or add logic, components, pictures, and fonts in your favorite IDE, and **import** them back into a valid `.HMI` file that Nextion Editor opens and compiles seamlessly.
 
 ---
 
@@ -14,15 +14,25 @@ Nextion Editor stores its UI projects in proprietary compound binary files (`.HM
 - **Zero Dependencies**: Pure Node.js (uses only built-in `fs`, `path`, `zlib`, and `crypto`).
 - **Clean Folder Structure**:
   - `pages/<page>.yaml`: One YAML file per page.
+  - `scripts/<page>/`: Modular script files with IDE syntax highlighting (`.js` extension with Nextion instruction set header).
   - `pictures/`: Standard PNG files extracted from the project.
-  - `pictures.yaml`: Human-readable picture definitions and IDs.
-  - `project.json`: Manifest preserving binary offsets and cryptographic hashes.
+  - `pictures.yaml`: Human-readable picture definitions and sequential IDs.
+  - `fonts/`: Extracted `.zi` binary font files.
+  - `fonts.yaml`: Font ID mapping, file names, and byte sizes.
+  - `project.json`: Manifest preserving binary offsets, component maps, and cryptographic hashes.
 - **Bi-directional Editing**:
   - **Modify existing components**: change `x`, `y`, `w`, `h`, `txt`, `font`, `pco` (foreground), `bco` (background), `xcen`, `ycen`, `pic`, `picc`.
-  - **Add new components**: inject new `button`, `text`, `picture`, or `hotspot` elements directly in YAML.
-  - **Add new pictures**: drop any PNG into `pictures/` and list it in `pictures.yaml`�it will be automatically converted to Nextion's native Mode 0 RGB565 format and registered with a sequential Picture ID.
-  - **Replace existing pictures**: modify any PNG in `pictures/` and the tool will detect the modification via SHA-256 and recompile it.
-- **Minimal, Surgical Changes**: Unchanged pictures and components remain 100% untouched and byte-identical.
+  - **Script logic**: edit event scripts in separate files or inline in YAML (`codesdown`, `codesup`, `codestimer`, `codesload`, etc.).
+  - **Variables**: declare and configure numeric or string variables (`type: "variable"`, `vscope: "local"|"global"`, `var_type: "number"|"string"`, `val`, `txt`, `txt_maxl`).
+  - **Timers**: configure timer intervals and tick logic (`type: "timer"`, `tim`, `en`, `codestimer`).
+  - **Add new components**: inject new `button`, `text`, `picture`, `hotspot`, `variable`, or `timer` elements directly in YAML.
+  - **Add or replace pictures**: drop any PNG into `pictures/` and list it in `pictures.yaml`—automatically converted to Nextion's native Mode 0 RGB565 format.
+  - **Add or replace fonts**: replace any `.zi` file in `fonts/` or append new fonts to `fonts.yaml`.
+- **Integrity & Safety Protections**:
+  - **Picture Order & Sequence Protection**: prevents scrambled picture IDs caused by accidental deletion or reordering.
+  - **Font Order & Sequence Protection**: prevents corrupted font references.
+  - **Component Removal Protection**: prevents accidental component deletion that would break contiguous Nextion IDs and internal scripts.
+- **Minimal, Surgical Changes**: Unchanged pictures, fonts, and components remain 100% untouched and byte-identical.
 - **Non-Destructive**: Never overwrites the source `.HMI` file; always outputs a new `.HMI` file.
 - **Full Nextion CRC Engine**: Automatically recalculates:
   - Page `.pa` CRCs
@@ -36,7 +46,7 @@ Nextion Editor stores its UI projects in proprietary compound binary files (`.HM
 Requires [Node.js](https://nodejs.org/) (v14 or later). No `npm install` needed!
 
 ```bash
-git clone https://github.com/<your-username>/nextion-hmi-tool.git
+git clone https://github.com/leo212/nextion-hmi-tool.git
 cd nextion-hmi-tool
 ```
 
@@ -55,21 +65,29 @@ If `output_directory` is omitted, it creates a folder named after the HMI file (
 #### Exported Structure:
 ```text
 nspanel_home/
-+-- pages/
-�   +-- home.yaml          # Components and visual layout for each page
-+-- pictures/
-�   +-- 0.png              # Extracted PNG assets
-�   +-- 1.png
-�   +-- ...
-+-- pictures.yaml          # Picture ID mapping
-+-- project.json           # Manifest with original offsets & hashes
+├── pages/
+│   └── home.yaml               # Components, layout & variable definitions
+├── scripts/
+│   └── home/
+│       ├── fn_center_ac.codesdown.js   # Touch-press event script
+│       └── click_timer.codestimer.js   # Timer event script
+├── pictures/
+│   ├── 0.png                   # Extracted PNG assets
+│   ├── 1.png
+│   └── ...
+├── pictures.yaml               # Picture ID mapping
+├── fonts/
+│   ├── 0.zi                    # Extracted font files
+│   └── ...
+├── fonts.yaml                  # Font ID mapping
+└── project.json                # Project manifest with hashes & component maps
 ```
 
 ---
 
-### 2. Edit Components in YAML
+### 2. Editing UI & Components in YAML
 
-Open `pages/home.yaml` in any text editor. You can move components, change fonts, colors, or text:
+Open `pages/home.yaml` in any text editor. You can move components, change fonts, colors, text, or define variables:
 
 ```yaml
 page: "home"
@@ -84,67 +102,113 @@ components:
     font: 2
     pco: 65535 # White
     bco: 0     # Black
+
+  # Hotspot running logic from a script file
+  - objname: "fn_center_ac"
+    type: "hotspot"
+    x: 0
+    y: 0
+    w: 2
+    h: 2
+    scripts:
+      codesdown: "scripts/home/fn_center_ac.codesdown.js"
+
+  # Numeric Variable (local scope)
+  - objname: "va_calc"
+    type: "variable"
+    vscope: "local"
+    var_type: "number"
+    val: 0
+
+  # String Variable
+  - objname: "cmd_in"
+    type: "variable"
+    vscope: "local"
+    var_type: "string"
+    txt: "init"
+    txt_maxl: 30
+
+  # Timer Component (800ms)
+  - objname: "click_timer"
+    type: "timer"
+    vscope: "local"
+    tim: 800
+    en: 0
+    scripts:
+      codestimer: "scripts/home/click_timer.codestimer.js"
 ```
 
-#### Adding a New Component:
-Simply append a new item to the `components` list in your page YAML:
+#### Adding New Components:
+Simply append a new item to `components` in the YAML file:
+* **Buttons**: `type: "button"`
+* **Text**: `type: "text"`
+* **Pictures**: `type: "picture"`, `pic: <id>`
+* **Hotspots**: `type: "hotspot"`
+* **Variables**: `type: "variable"`, `var_type: "number"|"string"`, `vscope: "local"|"global"`
+* **Timers**: `type: "timer"`, `tim: <ms>`, `en: 0|1`
 
+---
+
+### 3. Writing Nextion Scripts
+
+Scripts are exported into `scripts/<page>/<component>.<event>.js` with automatic JavaScript syntax highlighting in modern IDEs.
+
+Every script file starts with a clear header comment:
+```javascript
+// Nextion Display Script (Nextion instruction set syntax, not standard JavaScript)
+spstr cmd_in.txt,va_pwr.txt,",",0
+if(va_calc.val<=245)
+{
+  va_color.val=2047
+}
+p_gauge.pic=va_dec_num.val
+ref t_ac_pwr
+```
+
+#### Supported Event Keys (with friendly aliases):
+| Nextion Event Record | Friendly YAML Alias | Description |
+|---|---|---|
+| `codesdown` | `touch_press` | Touch Press Event |
+| `codesup` | `touch_release` | Touch Release Event |
+| `codestimer` | `timer` | Timer Tick Event |
+| `codesload` | `pre_init` | Page Pre-Initialization Event |
+| `codesloadend` | `post_init` | Page Post-Initialization Event |
+| `codesunload` | `page_exit` | Page Exit / Leave Event |
+
+*You can also define short scripts inline in YAML using multiline `|`:*
 ```yaml
-  # Add a new button
-  - objname: "b_restart"
+  - objname: "b_next"
     type: "button"
-    x: 100
-    y: 200
+    x: 10
+    y: 10
     w: 80
     h: 40
-    txt: "Restart"
-    font: 1
-    pco: 65535
-    bco: 1024
-
-  # Add a new picture displaying Picture ID 82
-  - objname: "p_logo"
-    type: "picture"
-    x: 200
-    y: 50
-    w: 64
-    h: 64
-    pic: 82
+    scripts:
+      codesdown: |
+        page page1
 ```
-
-Supported `type` values: `text`, `button`, `picture`, `hotspot`.
 
 ---
 
-### 3. Replace or Add Pictures
+### 4. Pictures & Fonts Management
 
-#### Replacing an Existing Picture:
-Simply replace the PNG file in `pictures/<id>.png` with your new image. The tool compares SHA-256 hashes during import and re-encodes only the changed image.
+#### Replacing Pictures or Fonts:
+* **Pictures**: Replace the PNG file in `pictures/<id>.png`. The tool compares SHA-256 hashes during import and only re-encodes changed images.
+* **Fonts**: Replace the `.zi` file in `fonts/<id>.zi`. The tool detects the changed hash and updates the archive entry.
 
-#### Adding a New Picture:
-1. Drop your new PNG file into `pictures/` (e.g. `pictures/82.png`).
-2. Add an entry to `pictures.yaml`:
+#### Adding New Pictures or Fonts:
+* **New Picture**: Place a new PNG in `pictures/` and append it sequentially to `pictures.yaml`.
+* **New Font**: Place a new `.zi` file in `fonts/` and append it sequentially to `fonts.yaml`.
 
-```yaml
-pictures:
-  - id: 0
-    name: "54.i"
-    file: "0.png"
-    width: 480
-    height: 320
-  ...
-  # New picture:
-  - id: 82
-    file: "82.png"
-    width: 64
-    height: 64
-```
-
-> **Note on Picture IDs**: Nextion assigns sequential 0-based IDs (`0, 1, 2, ...`). The tool strictly appends new pictures at the end of the registry so all existing component picture references (`pic`, `picc`) remain 100% valid.
+#### Safety Protections:
+To protect against corrupted project files and broken UI bindings:
+1. **Picture & Font IDs must be strictly sequential** (`0, 1, 2, ...`).
+2. **Deleting or reordering original pictures/fonts is blocked** to prevent shifting indices and scrambling references (`pic`, `picc`, `font`) across pages.
+3. **Omitting existing page components from YAML is blocked** to prevent breaking contiguous component IDs.
 
 ---
 
-### 4. Import Back into HMI
+### 5. Import Back into HMI
 
 Compile your changes into a brand new Nextion `.HMI` file:
 
@@ -154,7 +218,28 @@ node hmi_tool.js import <project_directory> [output.HMI]
 
 If `output.HMI` is omitted, it creates `<source_name>_modified.HMI`.
 
-Now open the newly generated file in **Nextion Editor** or compile it directly for your device!
+Now open the newly generated file in **Nextion Editor** or flash it to your device!
+
+---
+
+## Known Limitations
+
+1. **No Component Deletion**: Removing components by deleting them from a page YAML is intentionally unsupported. In Nextion, component IDs are strictly contiguous; removing an item requires re-indexing all subsequent IDs and risks breaking Nextion scripts that reference components by ID or name.
+2. **No Picture or Font Deletion / Reordering**: You cannot delete or change the order of existing pictures or fonts. In Nextion, components store hardcoded integer indices for picture and font bindings (`pic`, `picc`, `font`); shifting or deleting existing entries causes references to point to incorrect assets. You may, however, replace asset files in place or append new assets sequentially.
+3. **Page Creation**: Adding entirely new pages from scratch without an existing page template is not currently supported. Create your base pages in Nextion Editor first, then manage all components, scripts, layouts, and assets using this tool.
+4. **Complex Custom Widgets**: Dynamic component injection supports standard Nextion types (`button`, `text`, `picture`, `hotspot`, `variable`, `timer`). Highly specialized or complex widgets (e.g. waveform, custom canvas, dual-state buttons) should be initially placed via Nextion Editor before editing properties in YAML.
+
+---
+
+## Disclaimer & Limitation of Liability
+
+> [!WARNING]
+> **Use at your own risk.** This tool is an independent, community-developed reverse-engineering project and is **not** affiliated with, endorsed by, or supported by ITEAD Studio, Nextion, or their affiliates.
+
+* **Always keep backups**: Always maintain verified backup copies of your original `.HMI` project files before using this tool.
+* **No Warranty**: This software is provided "AS IS", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement.
+* **Limitation of Liability**: In no event shall the authors or copyright holders be liable for any claim, damages, data loss, project corruption, hardware malfunction, or other liability arising from the use or inability to use this software or files generated by it.
+* **Editor Verification**: Always verify generated `.HMI` files by opening and compiling them in Nextion Editor prior to flashing to production hardware.
 
 ---
 
