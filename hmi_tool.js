@@ -466,7 +466,7 @@ function rebuildRecordsWithScripts(attName, propRecords, scripts) {
     for (const evt of evts) {
         const scriptContent = normalizedScripts[evt];
         if (scriptContent !== undefined && scriptContent !== null && String(scriptContent).trim().length > 0) {
-            const lines = String(scriptContent).split(/\r?\n/);
+            const lines = String(scriptContent).split(/\r?\n/).filter(l => l.trim().length > 0);
             while (lines.length > 0 && lines[lines.length - 1] === '') {
                 lines.pop();
             }
