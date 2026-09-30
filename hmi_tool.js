@@ -1582,26 +1582,51 @@ function importHmi(projectDir, outHmiPath) {
 // ============================================================================
 
 
-function replaceImagesInHmi(srcHmiBuf, replacements) {
-    const fileCount = srcHmiBuf.readUInt32LE(0);
-    const archiveFiles = new Map();
-    let pos = 4;
-    for (let i = 0; i < fileCount; i++) {
-        const rawName = srcHmiBuf.toString('latin1', pos, pos + 16);
-        if (rawName.charCodeAt(0) !== 0) {
-            const name = rawName.replace(/\0.*$/, '');
-            const offset = srcHmiBuf.readUInt32LE(pos + 16);
-            const size = srcHmiBuf.readUInt32LE(pos + 20);
-            const f24 = srcHmiBuf.readUInt32LE(pos + 24);
-            archiveFiles.set(name, {
-                name,
-                f24,
-                data: Buffer.from(srcHmiBuf.subarray(offset, offset + size))
-            });
+function replaceArchiveFile(hmiBuf, targetName, newBuf) {
+    const entryCount = hmiBuf.readUInt32LE(0);
+    let targetEntry = null;
+    for (let i = 0; i < entryCount; i++) {
+        const pos = 4 + i * 28;
+        const name = hmiBuf.toString('latin1', pos, pos + 16).replace(/\0.*$/, '');
+        if (name === targetName) {
+            const start = hmiBuf.readUInt32LE(pos + 16);
+            const size = hmiBuf.readUInt32LE(pos + 20);
+            targetEntry = { index: i, pos, name, start, size };
+            break;
         }
-        pos += 28;
+    }
+    if (!targetEntry) {
+        console.warn(`[WARN] File "${targetName}" not found in HMI archive.`);
+        return hmiBuf;
     }
 
+    const delta = newBuf.length - targetEntry.size;
+    let newHmi = hmiBuf;
+    if (delta !== 0) {
+        newHmi = Buffer.alloc(hmiBuf.length + delta);
+        hmiBuf.copy(newHmi, 0, 0, targetEntry.start);
+        newBuf.copy(newHmi, targetEntry.start);
+        hmiBuf.copy(newHmi, targetEntry.start + newBuf.length, targetEntry.start + targetEntry.size);
+
+        for (let i = 0; i < entryCount; i++) {
+            const pos = 4 + i * 28;
+            const start = newHmi.readUInt32LE(pos + 16);
+            if (pos === targetEntry.pos) {
+                newHmi.writeUInt32LE(newBuf.length, pos + 20);
+            } else if (start > targetEntry.start) {
+                newHmi.writeUInt32LE(start + delta, pos + 16);
+            }
+        }
+    } else {
+        newBuf.copy(newHmi, targetEntry.start);
+    }
+
+    syncArchiveDirectoryTables(newHmi);
+    return newHmi;
+}
+
+function replaceImagesInHmi(srcHmiBuf, replacements) {
+    let currentHmi = srcHmiBuf;
     for (const { origPic, pngBuf } of replacements) {
         const decoded = decodePngToRgb565(pngBuf);
         const isBuf = buildIsBuffer(pngBuf, decoded.width, decoded.height);
@@ -1610,34 +1635,10 @@ function replaceImagesInHmi(srcHmiBuf, replacements) {
         const targetIName = origPic.name || (origPic.id + '.i');
         const targetIsName = origPic.isName || targetIName.replace(/\.i$/, '.is');
 
-        archiveFiles.set(targetIName, { name: targetIName, f24: 0, data: iBuf });
-        archiveFiles.set(targetIsName, { name: targetIsName, f24: 0, data: isBuf });
+        currentHmi = replaceArchiveFile(currentHmi, targetIName, iBuf);
+        currentHmi = replaceArchiveFile(currentHmi, targetIsName, isBuf);
     }
-
-    const fileList = Array.from(archiveFiles.values());
-    const newCount = fileList.length;
-
-    let currentOffset = 0x700000;
-    for (const f of fileList) {
-        f.offset = currentOffset;
-        f.size = f.data.length;
-        currentOffset += f.size;
-    }
-
-    const outBuf = Buffer.alloc(currentOffset);
-    outBuf.writeUInt32LE(newCount, 0);
-
-    let dirPos = 4;
-    for (const f of fileList) {
-        outBuf.write(f.name, dirPos, 16, 'latin1');
-        outBuf.writeUInt32LE(f.offset, dirPos + 16);
-        outBuf.writeUInt32LE(f.size, dirPos + 20);
-        outBuf.writeUInt32LE(f.f24 || 0, dirPos + 24);
-        f.data.copy(outBuf, f.offset);
-        dirPos += 28;
-    }
-
-    return outBuf;
+    return currentHmi;
 }
 
 function addImageToHmi(srcHmiBuf, imageId, pngBuf) {
