@@ -1,4 +1,19 @@
 #!/usr/bin/env node
+
+const CANONICAL_TEMPLATES = {
+  'att-42': Buffer.from("BgAAAGF0dC00MhEAAAB0eXBlAAAAAAAAAAAAAAAAYhEAAABpZAAAAAAAAAAAAAAAAAAABBsAAABvYmpuYW1lAAAAAAAAAAAAYnV0dG9uX2JhY2sRAAAAdnNjb3BlAAAAAAAAAAAAAAARAAAAZHJhZwAAAAAAAAAAAAAAAAARAAAAc2VuZGtleQAAAAAAAAAAAAMRAAAAYXBoAAAAAAAAAAAAAAAAAH8SAAAAbW92ZXgAAAAAAAAAAAAAAAAAEgAAAG1vdmV5AAAAAAAAAAAAAAAAABIAAAB4AAAAAAAAAAAAAAAAAAAAgQESAAAAeQAAAAAAAAAAAAAAAAAAAAAAEgAAAHcAAAAAAAAAAAAAAAAAAABfABIAAABoAAAAAAAAAAAAAAAAAAAAKAASAAAAZW5keAAAAAAAAAAAAAAAAN8BEgAAAGVuZHkAAAAAAAAAAAAAAAAnABEAAABlZmZlY3QAAAAAAAAAAAAAABEAAABmaXJzdAAAAAAAAAAAAAAAABIAAAB0aW1lAAAAAAAAAAAAAAAALAERAAAAbG9ja29iagAAAAAAAAAAAAAUAAAAZ3JvdXBpZDAAAAAAAAAAAAAAAAAUAAAAZ3JvdXBpZDEAAAAAAAAAAAAAAAARAAAAc3RhAAAAAAAAAAAAAAAAAAARAAAAc3R5bGUAAAAAAAAAAAAAAAASAAAAYm9yZGVyYwAAAAAAAAAAAAAAEQAAAGJvcmRlcncAAAAAAAAAAAACEQAAAGZvbnQAAAAAAAAAAAAAAAAIEgAAAHBpYwAAAAAAAAAAAAAAAAD//xIAAABwaWNjAAAAAAAAAAAAAAAAAAASAAAAYmNvAAAAAAAAAAAAAAAAAAAAEgAAAHBpYzIAAAAAAAAAAAAAAAD//xIAAABwaWNjMgAAAAAAAAAAAAAAAAASAAAAYmNvMgAAAAAAAAAAAAAAAAAAEgAAAHBjbwAAAAAAAAAAAAAAAAAQhBIAAABwY28yAAAAAAAAAAAAAAAA//8RAAAAeGNlbgAAAAAAAAAAAAAAAAERAAAAeWNlbgAAAAAAAAAAAAAAAAARAAAAdmFsAAAAAAAAAAAAAAAAAAATAAAAdHh0AAAAAAAAAAAAAAAAAO6FmBIAAAB0eHRfbWF4bAAAAAAAAAAAAwARAAAAaXNicgAAAAAAAAAAAAAAAAARAAAAc3BheAAAAAAAAAAAAAAAAAARAAAAc3BheQAAAAAAAAAAAAAAAAALAAAAY29kZXNkb3duLTERAAAAcGFnZSBob21lX3BhZ2VfaWQJAAAAY29kZXN1cC0wAAAAAA==", 'base64'),
+  'att-39': Buffer.from("BgAAAGF0dC0zOREAAAB0eXBlAAAAAAAAAAAAAAAAdBEAAABpZAAAAAAAAAAAAAAAAAAABBQAAABvYmpuYW1lAAAAAAAAAAAAdGV4dBEAAAB2c2NvcGUAAAAAAAAAAAAAABEAAABkcmFnAAAAAAAAAAAAAAAAABEAAABzZW5ka2V5AAAAAAAAAAAAABEAAABhcGgAAAAAAAAAAAAAAAAAfxIAAABtb3ZleAAAAAAAAAAAAAAAAAASAAAAbW92ZXkAAAAAAAAAAAAAAAAAEgAAAHgAAAAAAAAAAAAAAAAAAAAAABIAAAB5AAAAAAAAAAAAAAAAAAAADwASAAAAdwAAAAAAAAAAAAAAAAAAAMIBEgAAAGgAAAAAAAAAAAAAAAAAAAAiARIAAABlbmR4AAAAAAAAAAAAAAAAwQESAAAAZW5keQAAAAAAAAAAAAAAADABEQAAAGVmZmVjdAAAAAAAAAAAAAAAEQAAAGZpcnN0AAAAAAAAAAAAAAAAEgAAAHRpbWUAAAAAAAAAAAAAAAAsAREAAABsb2Nrb2JqAAAAAAAAAAAAABQAAABncm91cGlkMAAAAAAAAAAAAAAAABQAAABncm91cGlkMQAAAAAAAAAAAAAAABEAAABzdGEAAAAAAAAAAAAAAAAAAREAAABzdHlsZQAAAAAAAAAAAAAAABEAAABrZXkAAAAAAAAAAAAAAAAA/xIAAABib3JkZXJjAAAAAAAAAAAAAAARAAAAYm9yZGVydwAAAAAAAAAAAAIRAAAAZm9udAAAAAAAAAAAAAAAAAYSAAAAYmNvAAAAAAAAAAAAAAAAAAAAEgAAAHBpY2MAAAAAAAAAAAAAAAD//xIAAABwaWMAAAAAAAAAAAAAAAAA//8SAAAAcGNvAAAAAAAAAAAAAAAAAAhCEQAAAHhjZW4AAAAAAAAAAAAAAAABEQAAAHljZW4AAAAAAAAAAAAAAAABEQAAAHB3AAAAAAAAAAAAAAAAAAAAEAAAAHR4dAAAAAAAAAAAAAAAAAASAAAAdHh0X21heGwAAAAAAAAAAOgDEQAAAGlzYnIAAAAAAAAAAAAAAAABEQAAAHNwYXgAAAAAAAAAAAAAAAAAEQAAAHNwYXkAAAAAAAAAAAAAAAAACwAAAGNvZGVzZG93bi0wCQAAAGNvZGVzdXAtMRMAAABwYWdlIHdha2V1cF9wYWdlX2lkAAAAAA==", 'base64'),
+  'att-22': Buffer.from("BgAAAGF0dC0yMhEAAAB0eXBlAAAAAAAAAAAAAAAAcBEAAABpZAAAAAAAAAAAAAAAAAAAAxwAAABvYmpuYW1lAAAAAAAAAAAAd2VhdGhlcl9pY29uEQAAAHZzY29wZQAAAAAAAAAAAAAAEQAAAGRyYWcAAAAAAAAAAAAAAAAAEQAAAHNlbmRrZXkAAAAAAAAAAAADEQAAAGFwaAAAAAAAAAAAAAAAAAB/EgAAAG1vdmV4AAAAAAAAAAAAAAAAABIAAABtb3ZleQAAAAAAAAAAAAAAAAASAAAAeAAAAAAAAAAAAAAAAAAAADIAEgAAAHkAAAAAAAAAAAAAAAAAAAApABIAAAB3AAAAAAAAAAAAAAAAAAAAZAASAAAAaAAAAAAAAAAAAAAAAAAAAGQAEgAAAGVuZHgAAAAAAAAAAAAAAACVABIAAABlbmR5AAAAAAAAAAAAAAAAjAARAAAAZWZmZWN0AAAAAAAAAAAAAAARAAAAZmlyc3QAAAAAAAAAAAAAAAASAAAAdGltZQAAAAAAAAAAAAAAACwBEQAAAGxvY2tvYmoAAAAAAAAAAAAAFAAAAGdyb3VwaWQwAAAAAAAAAAAAAAAAFAAAAGdyb3VwaWQxAAAAAAAAAAAAAAAAEgAAAHBpYwAAAAAAAAAAAAAAAAABAAsAAABjb2Rlc2Rvd24tMAkAAABjb2Rlc3VwLTAAAAAA", 'base64'),
+  'att-21': Buffer.from("BgAAAGF0dC0yMREAAAB0eXBlAAAAAAAAAAAAAAAAbREAAABpZAAAAAAAAAAAAAAAAAAADB4AAABvYmpuYW1lAAAAAAAAAAAAYnRfYnJpZ2h0X2Rvd24RAAAAdnNjb3BlAAAAAAAAAAAAAAARAAAAZHJhZwAAAAAAAAAAAAAAAAARAAAAc2VuZGtleQAAAAAAAAAAAAMRAAAAYXBoAAAAAAAAAAAAAAAAAH8SAAAAbW92ZXgAAAAAAAAAAAAAAAAAEgAAAG1vdmV5AAAAAAAAAAAAAAAAABIAAAB4AAAAAAAAAAAAAAAAAAAATgASAAAAeQAAAAAAAAAAAAAAAAAAAKoAEgAAAHcAAAAAAAAAAAAAAAAAAAA8ABIAAABoAAAAAAAAAAAAAAAAAAAAPAASAAAAZW5keAAAAAAAAAAAAAAAAIkAEgAAAGVuZHkAAAAAAAAAAAAAAADlABEAAABlZmZlY3QAAAAAAAAAAAAAABEAAABmaXJzdAAAAAAAAAAAAAAAABIAAAB0aW1lAAAAAAAAAAAAAAAALAERAAAAbG9ja29iagAAAAAAAAAAAAAUAAAAZ3JvdXBpZDAAAAAAAAAAAAAAAAAUAAAAZ3JvdXBpZDEAAAAAAAAAAAAAAAALAAAAY29kZXNkb3duLTAKAAAAY29kZXN1cC0xMRYAAABpZihicmlnaHRzbGlkZXIudmFsPjApAQAAAHsUAAAAICBicmlnaHRzbGlkZXIudmFsLS0rAAAAICBjb3Z4IGJyaWdodHNsaWRlci52YWwsYnJpZ2h0X3RleHQudHh0LDAsMBYAAAAgIGJyaWdodF90ZXh0LnR4dCs9IiUiCwAAACAgcHJpbnRoIDkxGQAAACAgcHJpbnRzICJicmlnaHRzbGlkZXIiLDALAAAAICBwcmludGggMDAbAAAAICBwcmludHMgYnJpZ2h0c2xpZGVyLnZhbCwwEQAAACAgcHJpbnRoIEZGIEZGIEZGAQAAAH0AAAAA", 'base64'),
+  'att-11': Buffer.from("BgAAAGF0dC0xMREAAAB0eXBlAAAAAAAAAAAAAAAANBEAAABpZAAAAAAAAAAAAAAAAAAAAxcAAABvYmpuYW1lAAAAAAAAAAAAcGFnZV9pZBEAAAB2c2NvcGUAAAAAAAAAAAAAAREAAABsb2Nrb2JqAAAAAAAAAAAAABQAAABncm91cGlkMAAAAAAAAAAAAAAAABQAAABncm91cGlkMQAAAAAAAAAAAAAAABEAAABzdGEAAAAAAAAAAAAAAAAAABQAAAB0eHQAAAAAAAAAAAAAAAAAaG9tZRIAAAB0eHRfbWF4bAAAAAAAAAAACgAUAAAAdmFsAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 'base64'),
+  'att-9': Buffer.from("BQAAAGF0dC05EQAAAHR5cGUAAAAAAAAAAAAAAAAzEQAAAGlkAAAAAAAAAAAAAAAAAAADGgAAAG9iam5hbWUAAAAAAAAAAABzd2lwZXN0b3JlEQAAAHZzY29wZQAAAAAAAAAAAAAAEQAAAGxvY2tvYmoAAAAAAAAAAAAAFAAAAGdyb3VwaWQwAAAAAAAAAAAAAAAAFAAAAGdyb3VwaWQxAAAAAAAAAAAAAAAAEgAAAHRpbQAAAAAAAAAAAAAAAAAyABEAAABlbgAAAAAAAAAAAAAAAAAAAAwAAABjb2Rlc3RpbWVyLTILAAAAc3dpcGV4PXRjaDALAAAAc3dpcGV5PXRjaDEAAAAA", 'base64'),
+  'att-8': Buffer.from("BQAAAGF0dC04EQAAAHR5cGUAAAAAAAAAAAAAAAAFEQAAAGlkAAAAAAAAAAAAAAAAAAABFgAAAG9iam5hbWUAAAAAAAAAAAB3YWtldXARAAAAdnNjb3BlAAAAAAAAAAAAAAARAAAAbG9ja29iagAAAAAAAAAAAAAUAAAAZ3JvdXBpZDAAAAAAAAAAAAAAAAAUAAAAZ3JvdXBpZDEAAAAAAAAAAAAAAAARAAAAdmFsAAAAAAAAAAAAAAAAAAALAAAAY29kZXNkb3duLTETAAAAcGFnZSB3YWtldXBfcGFnZV9pZAkAAABjb2Rlc3VwLTAAAAAA", 'base64'),
+  'att-29': Buffer.from("BgAAAGF0dC0yOREAAAB0eXBlAAAAAAAAAAAAAAAAahEAAABpZAAAAAAAAAAAAAAAAAAACR0AAABvYmpuYW1lAAAAAAAAAAAAdGltZV9wcm9ncmVzcxEAAAB2c2NvcGUAAAAAAAAAAAAAABEAAABkcmFnAAAAAAAAAAAAAAAAABEAAABzZW5ka2V5AAAAAAAAAAAAAxEAAABhcGgAAAAAAAAAAAAAAAAAfxIAAABtb3ZleAAAAAAAAAAAAAAAAAASAAAAbW92ZXkAAAAAAAAAAAAAAAAAEgAAAHgAAAAAAAAAAAAAAAAAAAAOABIAAAB5AAAAAAAAAAAAAAAAAAAA2gASAAAAdwAAAAAAAAAAAAAAAAAAAK4BEgAAAGgAAAAAAAAAAAAAAAAAAAAKABIAAABlbmR4AAAAAAAAAAAAAAAAuwESAAAAZW5keQAAAAAAAAAAAAAAAOMAEQAAAGVmZmVjdAAAAAAAAAAAAAAAEQAAAGZpcnN0AAAAAAAAAAAAAAAAEgAAAHRpbWUAAAAAAAAAAAAAAAAsAREAAABsb2Nrb2JqAAAAAAAAAAAAABQAAABncm91cGlkMAAAAAAAAAAAAAAAABQAAABncm91cGlkMQAAAAAAAAAAAAAAABEAAABzdGEAAAAAAAAAAAAAAAAAABEAAABkZXoAAAAAAAAAAAAAAAAAABEAAAB2YWwAAAAAAAAAAAAAAAAAABEAAABkaXMAAAAAAAAAAAAAAAAAGRIAAABiY28AAAAAAAAAAAAAAAAACEASAAAAYnBpYwAAAAAAAAAAAAAAAP//EgAAAHBjbwAAAAAAAAAAAAAAAAAIgBIAAABwcGljAAAAAAAAAAAAAAAA//8LAAAAY29kZXNkb3duLTAJAAAAY29kZXN1cC0wAAAAAA==", 'base64'),
+  'att-28': Buffer.from("BgAAAGF0dC0yOBEAAAB0eXBlAAAAAAAAAAAAAAAAeREAAABpZAAAAAAAAAAAAAAAAAAAABsAAABvYmpuYW1lAAAAAAAAAAAAc2NyZWVuc2F2ZXIRAAAAdnNjb3BlAAAAAAAAAAAAAAARAAAAZHJhZwAAAAAAAAAAAAAAAAARAAAAc2VuZGtleQAAAAAAAAAAAAMRAAAAYXBoAAAAAAAAAAAAAAAAAH8SAAAAbW92ZXgAAAAAAAAAAAAAAAAAEgAAAG1vdmV5AAAAAAAAAAAAAAAAABIAAAB4AAAAAAAAAAAAAAAAAAAAAAASAAAAeQAAAAAAAAAAAAAAAAAAAAAAEgAAAHcAAAAAAAAAAAAAAAAAAADgARIAAABoAAAAAAAAAAAAAAAAAAAAQAESAAAAZW5keAAAAAAAAAAAAAAAAN8BEgAAAGVuZHkAAAAAAAAAAAAAAAA/AREAAABlZmZlY3QAAAAAAAAAAAAAABEAAABmaXJzdAAAAAAAAAAAAAAAABIAAAB0aW1lAAAAAAAAAAAAAAAALAERAAAAbG9ja29iagAAAAAAAAAAAAAUAAAAZ3JvdXBpZDAAAAAAAAAAAAAAAAAUAAAAZ3JvdXBpZDEAAAAAAAAAAAAAAAARAAAAdXAAAAAAAAAAAAAAAAAAAP8RAAAAZG93bgAAAAAAAAAAAAAAAP8RAAAAbGVmdAAAAAAAAAAAAAAAAP8RAAAAcmlnaHQAAAAAAAAAAAAAAP8RAAAAc3RhAAAAAAAAAAAAAAAAAAESAAAAYmNvAAAAAAAAAAAAAAAAAAAAEgAAAHBpYwAAAAAAAAAAAAAAAAD//wsAAABjb2Rlc2xvYWQtNQoAAAB2aXMgdGV4dCwwFAAAAGRpbT1icmlnaHRuZXNzX3NsZWVwHwAAAHNjcmVlbnNhdmVyLmJjbz1zY3JlZW5zYXZlcl9iY28YAAAAdGV4dC5iY289c2NyZWVuc2F2ZXJfYmNvBgAAAHNlbmRtZQ4AAABjb2Rlc2xvYWRlbmQtMAsAAABjb2Rlc2Rvd24tMAkAAABjb2Rlc3VwLTETAAAAcGFnZSB3YWtldXBfcGFnZV9pZA0AAABjb2Rlc3VubG9hZC0wAAAAAA==", 'base64')
+};
+
+
+
 /**
  * ============================================================================
  * Nextion HMI Visual Layout & Asset Manager (Nextion HMI Tool)
@@ -370,6 +385,8 @@ function updateComponentFromYaml(parsed, yComp) {
     if (yComp.ycen !== undefined && typeof yComp.ycen === 'number') setPropU8(parsed, 'ycen', yComp.ycen);
     if (yComp.pic !== undefined && yComp.pic !== 65535 && typeof yComp.pic === 'number') setPropU16(parsed, 'pic', yComp.pic);
     if (yComp.picc !== undefined && yComp.picc !== 65535 && typeof yComp.picc === 'number') setPropU16(parsed, 'picc', yComp.picc);
+    if (yComp.pic2 !== undefined && yComp.pic2 !== 65535 && typeof yComp.pic2 === 'number') setPropU16(parsed, 'pic2', yComp.pic2);
+    if (yComp.picc2 !== undefined && yComp.picc2 !== 65535 && typeof yComp.picc2 === 'number') setPropU16(parsed, 'picc2', yComp.picc2);
 
     // Variables & Timers
     if (yComp.vscope !== undefined) {
@@ -482,51 +499,10 @@ function rebuildRecordsWithScripts(attName, propRecords, scripts) {
     return newRecords;
 }
 
-function createDefaultVariableTemplate() {
-    const records = [];
-    const pad = (s) => {
-        const b = Buffer.alloc(16, 0);
-        b.write(s, 0, 'ascii');
-        return b;
-    };
-    records.push(Buffer.concat([pad('type'), Buffer.from([0x34])]));
-    records.push(Buffer.concat([pad('id'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('objname'), Buffer.from('va0', 'ascii')]));
-    records.push(Buffer.concat([pad('vscope'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('lockobj'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('groupid0'), Buffer.alloc(4, 0)]));
-    records.push(Buffer.concat([pad('groupid1'), Buffer.alloc(4, 0)]));
-    records.push(Buffer.concat([pad('sta'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('txt'), Buffer.alloc(0)]));
-    const maxlBuf = Buffer.alloc(2);
-    maxlBuf.writeUInt16LE(10, 0);
-    records.push(Buffer.concat([pad('txt_maxl'), maxlBuf]));
-    records.push(Buffer.concat([pad('val'), Buffer.alloc(4, 0)]));
-    records.push(Buffer.alloc(0));
-    return serializeComponentRecords('att-11', records);
-}
 
-function createDefaultTimerTemplate() {
-    const records = [];
-    const pad = (s) => {
-        const b = Buffer.alloc(16, 0);
-        b.write(s, 0, 'ascii');
-        return b;
-    };
-    records.push(Buffer.concat([pad('type'), Buffer.from([0x33])]));
-    records.push(Buffer.concat([pad('id'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('objname'), Buffer.from('tm0', 'ascii')]));
-    records.push(Buffer.concat([pad('vscope'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('lockobj'), Buffer.from([0x00])]));
-    records.push(Buffer.concat([pad('groupid0'), Buffer.alloc(4, 0)]));
-    records.push(Buffer.concat([pad('groupid1'), Buffer.alloc(4, 0)]));
-    const timBuf = Buffer.alloc(2);
-    timBuf.writeUInt16LE(50, 0);
-    records.push(Buffer.concat([pad('tim'), timBuf]));
-    records.push(Buffer.concat([pad('en'), Buffer.from([0x00])]));
-    records.push(Buffer.from('codestimer-0', 'ascii'));
-    records.push(Buffer.alloc(0));
-    return serializeComponentRecords('att-9', records);
+function getCanonicalTemplate(attName) {
+    if (CANONICAL_TEMPLATES[attName]) return Buffer.from(CANONICAL_TEMPLATES[attName]);
+    return Buffer.from(CANONICAL_TEMPLATES['att-39']);
 }
 
 function findTemplateInHmi(buffer, targetAtt) {
@@ -622,27 +598,35 @@ function patchPage(hmiBuf, pageData) {
             compBodies[j] = serializeComponentRecords(parsed.attName, parsed.records);
             updatedCount++;
         } else {
-            let targetAtt = 'att-39'; // default text
+            let targetAtt = 'att-39';
             const typeLower = (yComp.type || '').toLowerCase();
-            if (typeLower === 'button' || typeLower === 'att-42' || (!yComp.type && yComp.objname.startsWith('b'))) targetAtt = 'att-42';
-            else if (typeLower === 'text' || typeLower === 'att-39' || (!yComp.type && yComp.objname.startsWith('t'))) targetAtt = 'att-39';
-            else if (typeLower === 'picture' || typeLower === 'pic' || typeLower === 'att-22' || (!yComp.type && yComp.objname.startsWith('p'))) targetAtt = 'att-22';
-            else if (typeLower === 'hotspot' || typeLower === 'att-21' || typeLower === 'att-8' || (!yComp.type && yComp.objname.startsWith('m'))) targetAtt = 'att-21';
-            else if (typeLower === 'variable' || typeLower === 'var' || typeLower === 'att-11' || (!yComp.type && yComp.objname.startsWith('va_'))) targetAtt = 'att-11';
-            else if (typeLower === 'timer' || typeLower === 'tm' || typeLower === 'att-9' || typeLower === 'att-35' || (!yComp.type && yComp.objname.startsWith('tm_'))) targetAtt = 'att-9';
+            if (typeLower === 'button' || typeLower === 'btn' || typeLower === 'att-42' || (!yComp.type && yComp.objname.startsWith('b'))) {
+                targetAtt = 'att-42';
+            } else if (typeLower === 'text' || typeLower === 'txt' || typeLower === 'att-39' || (!yComp.type && yComp.objname.startsWith('t'))) {
+                targetAtt = 'att-39';
+            } else if (typeLower === 'picture' || typeLower === 'pic' || typeLower === 'att-22' || (!yComp.type && yComp.objname.startsWith('p'))) {
+                targetAtt = 'att-22';
+            } else if (typeLower === 'hotspot' || typeLower === 'touch' || typeLower === 'att-21' || (!yComp.type && (yComp.objname.startsWith('m') || yComp.objname.startsWith('fn_')))) {
+                targetAtt = 'att-21';
+            } else if (typeLower === 'variable' || typeLower === 'var' || typeLower === 'att-11' || (!yComp.type && (yComp.objname.startsWith('va_') || yComp.objname === 'cmd_in'))) {
+                targetAtt = 'att-11';
+            } else if (typeLower === 'timer' || typeLower === 'tm' || typeLower === 'att-9' || (!yComp.type && yComp.objname.startsWith('tm_'))) {
+                targetAtt = 'att-9';
+            } else if (typeLower === 'number' || typeLower === 'num' || typeLower === 'att-8' || (!yComp.type && yComp.objname.startsWith('n'))) {
+                targetAtt = 'att-8';
+            } else if (typeLower === 'progress' || typeLower === 'bar' || typeLower === 'att-29' || typeLower === 'att-30') {
+                targetAtt = 'att-29';
+            }
 
             let templateBuf = compBodies.find(cb => {
                 const aLen = cb.readUInt32LE(0);
                 return cb.slice(4, 4 + aLen).toString('ascii') === targetAtt;
             });
             if (!templateBuf) templateBuf = findTemplateInHmi(hmiBuf, targetAtt);
-            if (!templateBuf) {
-                if (targetAtt === 'att-11') templateBuf = createDefaultVariableTemplate();
-                else if (targetAtt === 'att-9') templateBuf = createDefaultTimerTemplate();
-                else templateBuf = compBodies[compBodies.length - 1];
-            }
+            if (!templateBuf) templateBuf = getCanonicalTemplate(targetAtt);
 
             const parsed = parseComponentRecords(templateBuf);
+            parsed.attName = targetAtt;
             const { propRecords } = extractPropertiesAndScripts(parsed);
             parsed.records = propRecords;
 
